@@ -54,7 +54,36 @@ The current first release uses the 1,369 selected NSGA-II 500 m allocation grids
 
 ## Full Building Footprint Tileset
 
-The 592,795-building click layer is prepared for Mapbox Tiling Service.
+The 592,795-building click layer can now be uploaded as a real Mapbox vector tileset file.
+
+Generate the `.mbtiles` file:
+
+```powershell
+python .\scripts\build_building_mbtiles.py
+```
+
+Generated local upload file:
+
+```text
+mapbox_mbtiles/shanghai_buildings_footprints.mbtiles
+```
+
+This MBTiles file contains the `shanghai_buildings` vector layer at z12-z15. It is about 122 MB, below Mapbox's 300 MB web upload limit. Upload this file in Mapbox Studio to get a normal tileset id, then configure `src/config.js`:
+
+```js
+buildingTileset: {
+  enabled: true,
+  sourceUrl: "mapbox://YOUR_MAPBOX_USERNAME.YOUR_TILESET_ID",
+  sourceLayer: "shanghai_buildings",
+  minzoom: 12.5
+}
+```
+
+The MBTiles file is ignored by Git because it is a generated binary.
+
+## Line-Delimited Source Fallback
+
+If you prefer Mapbox Tiling Service source/recipe workflows, the same building layer can also be prepared as line-delimited GeoJSON.
 
 Generate the source:
 

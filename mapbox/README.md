@@ -2,6 +2,39 @@
 
 This folder contains the recipe and sample needed to publish the true Shanghai building-footprint click layer as a Mapbox vector tileset.
 
+## Recommended: Upload MBTiles In Mapbox Studio
+
+The simplest path is now the generated MBTiles file:
+
+```powershell
+python .\scripts\build_building_mbtiles.py
+```
+
+Upload this file in Mapbox Studio:
+
+```text
+mapbox_mbtiles/shanghai_buildings_footprints.mbtiles
+```
+
+It contains a vector layer named:
+
+```text
+shanghai_buildings
+```
+
+After upload, copy the resulting Mapbox tileset id into `src/config.js`:
+
+```js
+buildingTileset: {
+  enabled: true,
+  sourceUrl: "mapbox://YOUR_MAPBOX_USERNAME.YOUR_TILESET_ID",
+  sourceLayer: "shanghai_buildings",
+  minzoom: 12.5
+}
+```
+
+## Fallback: MTS Source And Recipe
+
 The full source file is generated locally into `../mapbox_sources/` and is intentionally ignored by Git because the 592,795-building layer is too large for normal GitHub storage.
 
 ## Generate

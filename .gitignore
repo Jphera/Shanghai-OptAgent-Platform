@@ -8,6 +8,8 @@ server.err
 node_modules/
 dist/
 .cache/
+.vendor/
 __pycache__/
 *.pyc
 mapbox_sources/
+mapbox_mbtiles/
