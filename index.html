@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shanghai OptAgent Platform</title>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.css" rel="stylesheet" />
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main id="app">
+      <aside class="rail" aria-label="Primary navigation">
+        <div class="rail-brand">
+          <span class="mark">SO</span>
+          <span class="rail-title">OptAgent</span>
+        </div>
+        <button class="rail-button active" data-panel-target="overview" title="Overview">
+          <span>O</span>
+          <small>Overview</small>
+        </button>
+        <button class="rail-button" data-panel-target="layers" title="Map layers">
+          <span>L</span>
+          <small>Layers</small>
+        </button>
+        <button class="rail-button" data-panel-target="evidence" title="Evidence">
+          <span>E</span>
+          <small>Evidence</small>
+        </button>
+        <button class="rail-button" data-panel-target="chat" title="Agent chat">
+          <span>A</span>
+          <small>Agent</small>
+        </button>
+      </aside>
+
+      <section class="sidebar" aria-label="Controls">
+        <header class="product-header">
+          <p class="eyebrow">Shanghai urban retrofit decision support</p>
+          <h1>Agentic microclimate-aware decarbonization</h1>
+          <p class="subhead">
+            Explore NSGA-II retrofit allocation, semantic decision units, RAG constraints, and critic-agent audit traces from the Shanghai case study.
+          </p>
+        </header>
+
+        <div class="panel-section active" id="panel-overview">
+          <div class="metric-grid" id="metricGrid"></div>
+          <div class="control-block">
+            <label for="scenarioSelect">Scenario</label>
+            <select id="scenarioSelect"></select>
+          </div>
+          <div class="control-block">
+            <label for="gridSearch">Grid lookup</label>
+            <div class="search-row">
+              <input id="gridSearch" type="search" placeholder="Enter grid id, e.g. 166" />
+              <button id="gridSearchButton" type="button">Go</button>
+            </div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Selected scenario</div>
+            <div id="scenarioNarrative" class="narrative"></div>
+          </div>
+        </div>
+
+        <div class="panel-section" id="panel-layers">
+          <div class="control-block">
+            <label for="strategyFilter">Strategy filter</label>
+            <select id="strategyFilter"></select>
+          </div>
+          <div class="control-block">
+            <label for="colorMetric">Map color metric</label>
+            <select id="colorMetric">
+              <option value="strategy">Strategy</option>
+              <option value="annual_carbon_reduction_tco2">Annual carbon reduction</option>
+              <option value="selected_buildings">Selected buildings</option>
+              <option value="max_microclimate_sensitivity_pct">Microclimate sensitivity</option>
+            </select>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Legend</div>
+            <div id="legend" class="legend"></div>
+          </div>
+          <div class="toggle-list">
+            <label><input id="toggleBoundary" type="checkbox" checked /> Shanghai boundary</label>
+            <label><input id="toggleAllocation" type="checkbox" checked /> Selected allocation grids</label>
+            <label><input id="toggleLabels" type="checkbox" /> Grid labels</label>
+          </div>
+          <button id="fitView" type="button" class="wide-button">Fit Shanghai allocation</button>
+        </div>
+
+        <div class="panel-section" id="panel-evidence">
+          <div class="control-block">
+            <div class="section-title">Agent benchmark</div>
+            <div id="modelBenchmark" class="stacked-list"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Budget sensitivity</div>
+            <div id="budgetChart" class="bar-chart"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Formal intervention library</div>
+            <div id="interventionLibrary" class="strategy-list"></div>
+          </div>
+        </div>
+
+        <div class="panel-section" id="panel-chat">
+          <div class="control-block">
+            <div class="section-title">Agent settings</div>
+            <label for="apiKeyInput">API key</label>
+            <input id="apiKeyInput" type="password" placeholder="Optional DeepSeek API key" autocomplete="off" />
+            <label for="apiEndpointInput">Endpoint</label>
+            <input id="apiEndpointInput" type="text" />
+            <label for="apiModelInput">Model</label>
+            <input id="apiModelInput" type="text" />
+            <button id="saveApiSettings" type="button" class="wide-button">Save settings</button>
+          </div>
+          <div id="chatLog" class="chat-log" aria-live="polite"></div>
+          <form id="chatForm" class="chat-form">
+            <input id="chatInput" type="text" placeholder="Ask about the selected grid or portfolio..." />
+            <button type="submit">Send</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="map-shell">
+        <div id="map"></div>
+        <div id="tokenNotice" class="token-notice hidden">
+          <div>
+            <h2>Mapbox token required</h2>
+            <p>Paste a Mapbox public token to load the accurate basemap. It is stored only in this browser.</p>
+            <input id="mapboxTokenInput" type="password" placeholder="pk..." />
+            <button id="saveMapboxToken" type="button">Load Mapbox</button>
+          </div>
+        </div>
+        <div class="map-toolbar">
+          <button id="resetPitch" type="button">2D</button>
+          <button id="zoomSelected" type="button">Zoom selected</button>
+        </div>
+      </section>
+
+      <aside class="inspector" aria-label="Selected grid analysis">
+        <div class="inspector-header">
+          <span class="eyebrow">Critic agent view</span>
+          <h2 id="selectedTitle">Select a grid</h2>
+        </div>
+        <div id="selectedSummary" class="selected-summary"></div>
+        <div class="agent-steps" id="agentSteps"></div>
+        <div class="unit-examples" id="unitExamples"></div>
+      </aside>
+    </main>
+
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.js"></script>
+    <script src="./src/config.js"></script>
+    <script src="./src/app.js"></script>
+  </body>
+</html>
