@@ -65,10 +65,10 @@ python .\scripts\build_mapbox_building_tileset_source.py
 Generated local upload file:
 
 ```text
-mapbox_sources/shanghai_buildings_footprints.geojsonl
+mapbox_sources/shanghai_buildings_footprints.ldgeojson
 ```
 
-This file is line-delimited GeoJSON in WGS84 and is about 466 MB, so it is ignored by Git. Upload it to your Mapbox account using the recipe and commands in:
+This file is line-delimited GeoJSON in WGS84 and is about 466 MB, so it is ignored by Git. The `.ldgeojson` extension is required by Mapbox upload tools and Studio. Upload it to your Mapbox account using the recipe and commands in:
 
 ```text
 mapbox/README.md

@@ -12,7 +12,7 @@ SOURCE_CSV = Path(r"F:\博士文件\石老师课题组\6.AI-agent-LLM\data\shang
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = REPO_ROOT / "mapbox_sources"
 PUBLIC_MAPBOX_DIR = REPO_ROOT / "mapbox"
-SOURCE_PATH = OUT_DIR / "shanghai_buildings_footprints.geojsonl"
+SOURCE_PATH = OUT_DIR / "shanghai_buildings_footprints.ldgeojson"
 MANIFEST_PATH = OUT_DIR / "shanghai_buildings_footprints_manifest.json"
 SAMPLE_PATH = PUBLIC_MAPBOX_DIR / "shanghai_buildings_footprints_sample.geojson"
 

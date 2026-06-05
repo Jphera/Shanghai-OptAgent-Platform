@@ -12,7 +12,7 @@ python .\scripts\build_mapbox_building_tileset_source.py
 
 Outputs:
 
-- `mapbox_sources/shanghai_buildings_footprints.geojsonl`
+- `mapbox_sources/shanghai_buildings_footprints.ldgeojson`
 - `mapbox_sources/shanghai_buildings_footprints_manifest.json`
 - `mapbox/shanghai_buildings_footprints_sample.geojson`
 
@@ -35,7 +35,7 @@ $env:MAPBOX_ACCESS_TOKEN="sk.your_mapbox_secret_token"
 Upload the source:
 
 ```powershell
-tilesets upload-source YOUR_MAPBOX_USERNAME shanghai_buildings_footprints .\mapbox_sources\shanghai_buildings_footprints.geojsonl
+tilesets upload-source YOUR_MAPBOX_USERNAME shanghai_buildings_footprints .\mapbox_sources\shanghai_buildings_footprints.ldgeojson
 ```
 
 Create the tileset:
