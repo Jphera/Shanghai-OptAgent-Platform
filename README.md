@@ -68,7 +68,21 @@ Generated local upload file:
 mapbox_sources/shanghai_buildings_footprints.ldgeojson
 ```
 
-This file is line-delimited GeoJSON in WGS84 and is about 466 MB, so it is ignored by Git. The `.ldgeojson` extension is required by Mapbox upload tools and Studio. Upload it to your Mapbox account using the recipe and commands in:
+This file is line-delimited GeoJSON in WGS84 and is about 466 MB, so it is ignored by Git. The `.ldgeojson` extension is required by Mapbox upload tools and Studio.
+
+Mapbox Studio's web upload has a 300 MB per-file limit. Use the split files instead:
+
+```powershell
+python .\scripts\split_mapbox_tileset_source.py
+```
+
+Generated split upload files:
+
+```text
+mapbox_sources/shanghai_buildings_footprints_parts/
+```
+
+Upload the split files to one Mapbox tileset source using the recipe and commands in:
 
 ```text
 mapbox/README.md

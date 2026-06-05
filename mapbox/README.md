@@ -13,10 +13,20 @@ python .\scripts\build_mapbox_building_tileset_source.py
 Outputs:
 
 - `mapbox_sources/shanghai_buildings_footprints.ldgeojson`
+- `mapbox_sources/shanghai_buildings_footprints_parts/shanghai_buildings_footprints_part_01.ldgeojson`
+- `mapbox_sources/shanghai_buildings_footprints_parts/shanghai_buildings_footprints_part_02.ldgeojson`
 - `mapbox_sources/shanghai_buildings_footprints_manifest.json`
 - `mapbox/shanghai_buildings_footprints_sample.geojson`
 
 The source file is line-delimited GeoJSON in WGS84, transformed from the source building CSV polygon field.
+
+Mapbox Studio's browser uploader rejects files larger than 300 MB. The split files are designed to stay below that limit. Mapbox Tiling Service supports tileset sources made from multiple files, and the Tilesets CLI can upload several files or an entire directory into the same source.
+
+If the full source already exists, split it without regenerating:
+
+```powershell
+python .\scripts\split_mapbox_tileset_source.py
+```
 
 ## Upload With Mapbox Tilesets CLI
 
@@ -35,7 +45,13 @@ $env:MAPBOX_ACCESS_TOKEN="sk.your_mapbox_secret_token"
 Upload the source:
 
 ```powershell
-tilesets upload-source YOUR_MAPBOX_USERNAME shanghai_buildings_footprints .\mapbox_sources\shanghai_buildings_footprints.ldgeojson
+tilesets upload-source YOUR_MAPBOX_USERNAME shanghai_buildings_footprints .\mapbox_sources\shanghai_buildings_footprints_parts\ --no-validation
+```
+
+Or pass the two files explicitly:
+
+```powershell
+tilesets upload-source YOUR_MAPBOX_USERNAME shanghai_buildings_footprints .\mapbox_sources\shanghai_buildings_footprints_parts\shanghai_buildings_footprints_part_01.ldgeojson .\mapbox_sources\shanghai_buildings_footprints_parts\shanghai_buildings_footprints_part_02.ldgeojson --no-validation
 ```
 
 Create the tileset:

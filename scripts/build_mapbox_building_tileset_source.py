@@ -13,11 +13,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = REPO_ROOT / "mapbox_sources"
 PUBLIC_MAPBOX_DIR = REPO_ROOT / "mapbox"
 SOURCE_PATH = OUT_DIR / "shanghai_buildings_footprints.ldgeojson"
+PARTS_DIR = OUT_DIR / "shanghai_buildings_footprints_parts"
 MANIFEST_PATH = OUT_DIR / "shanghai_buildings_footprints_manifest.json"
 SAMPLE_PATH = PUBLIC_MAPBOX_DIR / "shanghai_buildings_footprints_sample.geojson"
 
 CHUNK_SIZE = 25000
 SAMPLE_LIMIT = 250
+MAX_PART_SIZE_MB = 240
+MAX_PART_SIZE_BYTES = MAX_PART_SIZE_MB * 1024 * 1024
 TRANSFORMER = Transformer.from_crs("EPSG:32651", "EPSG:4326", always_xy=True)
 
 SOURCE_COLUMNS = [
@@ -144,15 +147,25 @@ def main():
         raise FileNotFoundError(SOURCE_CSV)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    PARTS_DIR.mkdir(parents=True, exist_ok=True)
     PUBLIC_MAPBOX_DIR.mkdir(parents=True, exist_ok=True)
+    for stale_part in PARTS_DIR.glob("*.ldgeojson"):
+        stale_part.unlink()
 
     start = time.time()
     written = 0
     skipped = 0
+    part_index = 1
+    part_feature_count = 0
+    part_paths = []
     samples = []
     bounds = [180.0, 90.0, -180.0, -90.0]
     coarse_counts = {}
     age_counts = {}
+
+    part_path = PARTS_DIR / f"shanghai_buildings_footprints_part_{part_index:02d}.ldgeojson"
+    part_handle = part_path.open("w", encoding="utf-8", newline="\n")
+    part_paths.append(part_path)
 
     with SOURCE_PATH.open("w", encoding="utf-8", newline="\n") as handle:
         for chunk_index, chunk in enumerate(
@@ -165,8 +178,20 @@ def main():
                     skipped += 1
                     continue
 
-                handle.write(json.dumps(feature, ensure_ascii=False, separators=(",", ":")) + "\n")
+                line = json.dumps(feature, ensure_ascii=False, separators=(",", ":")) + "\n"
+                encoded_size = len(line.encode("utf-8"))
+                if part_feature_count and part_handle.tell() + encoded_size > MAX_PART_SIZE_BYTES:
+                    part_handle.close()
+                    part_index += 1
+                    part_feature_count = 0
+                    part_path = PARTS_DIR / f"shanghai_buildings_footprints_part_{part_index:02d}.ldgeojson"
+                    part_handle = part_path.open("w", encoding="utf-8", newline="\n")
+                    part_paths.append(part_path)
+
+                handle.write(line)
+                part_handle.write(line)
                 written += 1
+                part_feature_count += 1
 
                 props = feature["properties"]
                 coarse = props.get("coarse_function", "unknown")
@@ -185,6 +210,8 @@ def main():
                     samples.append(feature)
 
             print(f"chunk {chunk_index}: written={written:,}, skipped={skipped:,}", flush=True)
+
+    part_handle.close()
 
     sample_collection = {"type": "FeatureCollection", "features": samples}
     SAMPLE_PATH.write_text(json.dumps(sample_collection, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
@@ -221,15 +248,29 @@ def main():
         "age_bin_counts": dict(sorted(age_counts.items())),
         "source_file": str(SOURCE_PATH),
         "source_size_mb": round(SOURCE_PATH.stat().st_size / 1024 / 1024, 2),
+        "split_dir": str(PARTS_DIR),
+        "split_max_part_size_mb": MAX_PART_SIZE_MB,
+        "split_files": [
+            {
+                "path": str(path),
+                "size_mb": round(path.stat().st_size / 1024 / 1024, 2),
+                "bytes": path.stat().st_size,
+            }
+            for path in part_paths
+        ],
         "sample_file": str(SAMPLE_PATH),
         "elapsed_sec": round(time.time() - start, 2),
     }
     MANIFEST_PATH.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"Wrote {SOURCE_PATH}")
+    print(f"Wrote split files in {PARTS_DIR}")
     print(f"Wrote {MANIFEST_PATH}")
     print(f"Wrote {SAMPLE_PATH}")
-    print(f"Features: {written:,}; skipped: {skipped:,}; size: {manifest['source_size_mb']} MB")
+    print(
+        f"Features: {written:,}; skipped: {skipped:,}; "
+        f"size: {manifest['source_size_mb']} MB; parts: {len(part_paths)}"
+    )
 
 
 if __name__ == "__main__":
