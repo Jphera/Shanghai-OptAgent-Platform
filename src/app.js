@@ -46,6 +46,15 @@ const METRIC_LABELS = {
   max_microclimate_sensitivity_pct: "Microclimate sensitivity"
 };
 
+const FUNCTION_COLORS = {
+  "住宅类": "#4d8b57",
+  "办公就业类": "#286ca3",
+  "商业服务类": "#d8902f",
+  "公共服务类": "#7b63b7",
+  "工业仓储类": "#bd4a42",
+  "交通设施类": "#6c757d"
+};
+
 const state = {
   data: null,
   map: null,
@@ -54,7 +63,8 @@ const state = {
   scenarioId: "S3_proposed_refined_microclimate_agentic",
   strategyFilter: "all",
   colorMetric: "strategy",
-  popup: null
+  popup: null,
+  selectedBuilding: null
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -205,6 +215,8 @@ function addMapSourcesAndLayers() {
     }
   });
 
+  addBuildingTilesetLayer();
+
   map.addLayer({
     id: "allocation-labels",
     type: "symbol",
@@ -238,7 +250,96 @@ function addMapSourcesAndLayers() {
   });
 
   applyMapFilters();
+  configureBuildingToggle();
   renderLegend();
+}
+
+function addBuildingTilesetLayer() {
+  const cfg = CONFIG.buildingTileset || {};
+  if (!cfg.enabled || !cfg.sourceUrl || !cfg.sourceLayer || !state.map) return;
+  const map = state.map;
+
+  map.addSource("shanghai-buildings", {
+    type: "vector",
+    url: cfg.sourceUrl
+  });
+
+  map.addLayer({
+    id: "building-fill",
+    type: "fill",
+    source: "shanghai-buildings",
+    "source-layer": cfg.sourceLayer,
+    minzoom: cfg.minzoom || 12.5,
+    paint: {
+      "fill-color": buildingFunctionColorExpression(),
+      "fill-opacity": [
+        "case",
+        ["boolean", ["feature-state", "hover"], false],
+        0.72,
+        0.48
+      ]
+    }
+  });
+
+  map.addLayer({
+    id: "building-line",
+    type: "line",
+    source: "shanghai-buildings",
+    "source-layer": cfg.sourceLayer,
+    minzoom: cfg.minzoom || 12.5,
+    paint: {
+      "line-color": "#ffffff",
+      "line-opacity": 0.42,
+      "line-width": 0.45
+    }
+  });
+
+  map.addLayer({
+    id: "building-selected-line",
+    type: "line",
+    source: "shanghai-buildings",
+    "source-layer": cfg.sourceLayer,
+    minzoom: cfg.minzoom || 12.5,
+    filter: ["==", ["get", "bldg_id"], -1],
+    paint: {
+      "line-color": "#172126",
+      "line-width": 2.4,
+      "line-opacity": 0.95
+    }
+  });
+
+  map.on("click", "building-fill", (event) => {
+    const feature = event.features && event.features[0];
+    if (!feature) return;
+    selectBuildingFeature(feature, event.lngLat);
+  });
+
+  map.on("mouseenter", "building-fill", () => {
+    map.getCanvas().style.cursor = "pointer";
+  });
+
+  map.on("mouseleave", "building-fill", () => {
+    map.getCanvas().style.cursor = "";
+  });
+}
+
+function buildingFunctionColorExpression() {
+  const expression = ["match", ["get", "coarse_function"]];
+  Object.entries(FUNCTION_COLORS).forEach(([key, color]) => expression.push(key, color));
+  expression.push("#8d989d");
+  return expression;
+}
+
+function configureBuildingToggle() {
+  const checkbox = document.getElementById("toggleBuildings");
+  const cfg = CONFIG.buildingTileset || {};
+  if (!cfg.enabled) {
+    checkbox.checked = false;
+    checkbox.disabled = true;
+    checkbox.parentElement.title = "Upload the Mapbox tileset and set buildingTileset.enabled=true in src/config.js.";
+    return;
+  }
+  checkbox.disabled = false;
 }
 
 function strategyColorExpression() {
@@ -318,6 +419,10 @@ function wireLayerControls() {
 
   document.getElementById("toggleAllocation").addEventListener("change", (event) => {
     setLayerVisibility(["allocation-fill", "allocation-line", "allocation-selected-line"], event.target.checked);
+  });
+
+  document.getElementById("toggleBuildings").addEventListener("change", (event) => {
+    setLayerVisibility(["building-fill", "building-line", "building-selected-line"], event.target.checked);
   });
 
   document.getElementById("toggleLabels").addEventListener("change", (event) => {
@@ -495,6 +600,7 @@ function renderLegend() {
 }
 
 function selectFeature(feature, lngLat) {
+  state.selectedBuilding = null;
   state.selectedFeature = feature;
   const p = feature.properties;
 
@@ -521,6 +627,41 @@ function selectFeature(feature, lngLat) {
   renderSelected();
 }
 
+function selectBuildingFeature(feature, lngLat) {
+  state.selectedBuilding = feature;
+  const p = feature.properties;
+  const gridId = Number(p.grid_id);
+  const gridFeature = state.data.allocationGeojson.features.find(
+    (item) => Number(item.properties.grid_id) === gridId
+  );
+  state.selectedFeature = gridFeature || null;
+
+  if (state.map && state.map.getLayer("building-selected-line")) {
+    state.map.setFilter("building-selected-line", ["==", ["get", "bldg_id"], Number(p.bldg_id)]);
+  }
+  if (state.map && state.map.getLayer("allocation-selected-line")) {
+    state.map.setFilter("allocation-selected-line", [
+      "==",
+      ["get", "grid_id"],
+      Number.isFinite(gridId) ? gridId : -1
+    ]);
+  }
+
+  if (state.popup) state.popup.remove();
+  if (state.map && lngLat) {
+    state.popup = new mapboxgl.Popup({ closeButton: false, maxWidth: "300px" })
+      .setLngLat(lngLat)
+      .setHTML(`
+        <div class="popup-title">Building ${p.bldg_id || "unknown"}</div>
+        <div class="popup-line">${p.coarse_function || "Function unknown"} | ${p.age_bin || "age unknown"}</div>
+        <div class="popup-line">Grid ${p.grid_id || "n/a"} | ${p.thermal_template || "template n/a"}</div>
+      `)
+      .addTo(state.map);
+  }
+
+  renderSelectedBuilding();
+}
+
 function renderEmptySelection() {
   document.getElementById("selectedSummary").innerHTML = `
     <p class="narrative">Click a selected 500 m allocation grid on the map. The critic agent panel will explain the selected strategy, expected carbon impact, feasibility trace, and representative decision units.</p>
@@ -545,6 +686,67 @@ function renderSelected() {
 
   renderAgentSteps(p);
   renderUnitExamples(p.grid_id);
+}
+
+function renderSelectedBuilding() {
+  const p = state.selectedBuilding.properties;
+  const grid = state.selectedFeature ? state.selectedFeature.properties : null;
+  document.getElementById("selectedTitle").textContent = `Building ${p.bldg_id || "unknown"}`;
+  document.getElementById("selectedSummary").innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-tile"><strong>${p.coarse_function || "n/a"}</strong><span>refined function</span></div>
+      <div class="summary-tile"><strong>${p.age_bin || "n/a"}</strong><span>age bin</span></div>
+      <div class="summary-tile"><strong>${p.thermal_template || "n/a"}</strong><span>thermal template</span></div>
+      <div class="summary-tile"><strong>${formatNumber(p.llm_confidence, 2)}</strong><span>LLM confidence</span></div>
+      <div class="summary-tile"><strong>${formatNumber(p.height_m, 1)} m</strong><span>height</span></div>
+      <div class="summary-tile"><strong>${formatNumber(p.footprint_m2, 0)} m2</strong><span>footprint</span></div>
+    </div>
+  `;
+
+  const gridText = grid
+    ? `This building belongs to selected grid ${grid.grid_id}, where the portfolio chooses ${strategyLabel(grid.strategy_id)} for ${formatNumber(grid.selected_buildings)} buildings and ${formatNumber(grid.annual_carbon_reduction_tco2, 1)} tCO2/yr.`
+    : "This building's grid is not part of the selected NSGA-II allocation layer; it can still be used for semantic inspection and future what-if candidate generation.";
+
+  document.getElementById("agentSteps").innerHTML = `
+    <div class="agent-step">
+      <h3>Data Agent: building semantics</h3>
+      <p>${p.fine_function || p.coarse_function || "Unknown refined function"}; source type ${p.source_type || "n/a"}; source age ${p.source_age || "n/a"}.</p>
+    </div>
+    <div class="agent-step">
+      <h3>Decision-unit linkage</h3>
+      <p>${gridText}</p>
+    </div>
+    <div class="agent-step ${Number(p.llm_confidence) < 0.75 ? "warning" : ""}">
+      <h3>Critic Agent: semantic confidence</h3>
+      <p>${buildingCriticText(p, grid)}</p>
+    </div>
+  `;
+
+  document.getElementById("unitExamples").innerHTML = `
+    <div class="section-title">Semantic reasoning</div>
+    <div class="unit-card">
+      <p>${p.semantic_reason || "No semantic reasoning text is available in the tileset output for this building."}</p>
+      <div class="tag-row">
+        <span class="tag">Grid ${p.grid_id || "n/a"}</span>
+        <span class="tag">${p.cooling_cop ? `Cooling COP ${p.cooling_cop}` : "COP n/a"}</span>
+        <span class="tag">${p.heating_cop ? `Heating COP ${p.heating_cop}` : "Heating COP n/a"}</span>
+      </div>
+    </div>
+  `;
+}
+
+function buildingCriticText(p, grid) {
+  const confidence = Number(p.llm_confidence);
+  const parts = [];
+  if (Number.isFinite(confidence) && confidence < 0.75) {
+    parts.push("Semantic confidence is below the usual threshold; expert review or POI evidence check is recommended before using this building for high-cost retrofit decisions.");
+  } else {
+    parts.push("Semantic confidence is acceptable for decision-unit aggregation.");
+  }
+  if (grid) {
+    parts.push(`Grid-level selected strategy is ${strategyLabel(grid.strategy_id)}, so building-level interpretation should be treated as evidence for a grid/unit portfolio decision rather than a direct single-building prescription.`);
+  }
+  return parts.join(" ");
 }
 
 function renderAgentSteps(p) {
@@ -793,11 +995,13 @@ async function callRemoteModel(message, apiKey, endpoint, model) {
 function buildContextPrompt() {
   const metrics = state.data.coreMetrics;
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
+  const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
   const scenario = state.data.scenarioSummary.find((row) => row.scenario_id === state.scenarioId);
   return JSON.stringify(
     {
       coreMetrics: metrics,
       activeScenario: scenario,
+      selectedBuilding: building,
       selectedGrid: selected,
       selectedUnits: selected ? state.data.unitExamplesByGrid[String(selected.grid_id)] || [] : []
     },
@@ -808,6 +1012,12 @@ function buildContextPrompt() {
 
 function localAgentAnswer(message) {
   const text = message.toLowerCase();
+  if (state.selectedBuilding) {
+    const b = state.selectedBuilding.properties;
+    if (text.includes("building") || text.includes("建筑") || text.includes("confidence") || text.includes("语义")) {
+      return `Building ${b.bldg_id || "unknown"} is classified as ${b.coarse_function || "unknown"} / ${b.fine_function || "unknown"}, age bin ${b.age_bin || "unknown"}, template ${b.thermal_template || "unknown"}, with LLM confidence ${formatNumber(b.llm_confidence, 2)}. ${buildingCriticText(b, state.selectedFeature && state.selectedFeature.properties)}`;
+    }
+  }
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
 
   if (!selected) {

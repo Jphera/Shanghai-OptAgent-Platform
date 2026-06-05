@@ -52,6 +52,30 @@ python scripts/build_platform_data.py
 
 The current first release uses the 1,369 selected NSGA-II 500 m allocation grids as the primary clickable map layer. The full 592,795-building stock CSV is intentionally not bundled into GitHub Pages. For a true building-footprint click layer, convert the building stock into a Mapbox tileset and reference it in `src/config.js`.
 
+## Full Building Footprint Tileset
+
+The 592,795-building click layer is prepared for Mapbox Tiling Service.
+
+Generate the source:
+
+```powershell
+python .\scripts\build_mapbox_building_tileset_source.py
+```
+
+Generated local upload file:
+
+```text
+mapbox_sources/shanghai_buildings_footprints.geojsonl
+```
+
+This file is line-delimited GeoJSON in WGS84 and is about 466 MB, so it is ignored by Git. Upload it to your Mapbox account using the recipe and commands in:
+
+```text
+mapbox/README.md
+```
+
+After publishing the tileset, set `buildingTileset.enabled = true`, `sourceUrl`, and `sourceLayer` in `src/config.js`. The platform will then show clickable building footprints at high zoom and link each building to the grid-level OptAgent portfolio where available.
+
 ## Deployment
 
 The site is designed for GitHub Pages. Publish this repository and enable Pages from the default branch root.

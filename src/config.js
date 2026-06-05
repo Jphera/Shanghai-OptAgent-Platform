@@ -15,8 +15,9 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
   },
   buildingTileset: {
     enabled: false,
-    sourceUrl: "",
-    sourceLayer: "",
-    note: "Upload full Shanghai building footprints to Mapbox as a vector tileset, then configure this block."
+    sourceUrl: "mapbox://YOUR_MAPBOX_USERNAME.shanghai_buildings_footprints",
+    sourceLayer: "shanghai_buildings",
+    minzoom: 12.5,
+    note: "Upload mapbox_sources/shanghai_buildings_footprints.geojsonl as a Mapbox tileset, then set enabled to true."
   }
 };

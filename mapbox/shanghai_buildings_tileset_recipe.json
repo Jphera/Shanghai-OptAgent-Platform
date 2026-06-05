@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "layers": {
+    "shanghai_buildings": {
+      "source": "mapbox://tileset-source/YOUR_MAPBOX_USERNAME/shanghai_buildings_footprints",
+      "minzoom": 10,
+      "maxzoom": 15,
+      "features": {
+        "attributes": {
+          "allowed_output": [
+            "bldg_id",
+            "grid_id",
+            "height_m",
+            "source_type",
+            "source_age",
+            "footprint_m2",
+            "coarse_function",
+            "fine_function",
+            "building_name",
+            "age_bin",
+            "thermal_template",
+            "cooling_cop",
+            "heating_cop",
+            "llm_confidence",
+            "semantic_reason",
+            "center_lon",
+            "center_lat"
+          ]
+        }
+      }
+    }
+  }
+}
