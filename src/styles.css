@@ -114,10 +114,18 @@ select:focus {
   width: 42px;
   height: 42px;
   border-radius: 8px;
-  background: #ffffff;
+  background: #f5f7f2;
   color: #203039;
-  font-size: 14px;
-  font-weight: 800;
+}
+
+.mark svg {
+  width: 32px;
+  height: 32px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .rail-title {
@@ -287,6 +295,10 @@ h2 {
   width: 100%;
 }
 
+.inline-action {
+  margin-top: 10px;
+}
+
 .narrative {
   color: var(--muted);
   font-size: 14px;
@@ -354,11 +366,35 @@ h2 {
   right: 16px;
   z-index: 3;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+  justify-content: flex-end;
+  max-width: min(700px, calc(100vw - 560px));
 }
 
 .map-toolbar button {
   padding: 0 12px;
+  box-shadow: var(--shadow);
+}
+
+.map-toolbar .primary-tool {
+  border-color: rgba(22, 122, 117, 0.35);
+  background: var(--teal);
+  color: #ffffff;
+}
+
+.building-status {
+  display: inline-flex;
+  min-height: 36px;
+  align-items: center;
+  max-width: 280px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
   box-shadow: var(--shadow);
 }
 
@@ -524,10 +560,122 @@ h2 {
   overflow: hidden;
 }
 
-.benchmark-figure img {
+.benchmark-figure img,
+.evidence-figure img {
   display: block;
   width: 100%;
   height: auto;
+}
+
+.evidence-figure {
+  margin: 12px 0 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.benchmark-explorer,
+.archetype-explorer,
+.policy-explorer {
+  display: grid;
+  gap: 12px;
+}
+
+.benchmark-bars,
+.archetype-list,
+.policy-list {
+  display: grid;
+  gap: 8px;
+}
+
+.benchmark-row,
+.archetype-row,
+.policy-row {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  text-align: left;
+}
+
+.benchmark-row.active,
+.archetype-row.active {
+  border-color: rgba(22, 122, 117, 0.55);
+  background: rgba(22, 122, 117, 0.08);
+}
+
+.benchmark-row-top,
+.archetype-row-top,
+.policy-row-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.benchmark-row-top strong,
+.archetype-row-top strong,
+.policy-row-top strong {
+  min-width: 0;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.benchmark-row-top span,
+.archetype-row-top span,
+.policy-row-top span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.rank-track {
+  height: 9px;
+  border-radius: 8px;
+  background: rgba(30, 43, 48, 0.08);
+  overflow: hidden;
+}
+
+.rank-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+}
+
+.task-chip-grid,
+.strategy-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.task-chip,
+.strategy-chip {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.task-chip strong,
+.strategy-chip strong {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--ink);
+}
+
+.strategy-chip.selected {
+  border-color: rgba(216, 144, 47, 0.45);
+  background: rgba(216, 144, 47, 0.12);
 }
 
 .agent-workbench {
@@ -843,10 +991,53 @@ button.list-item {
 .chat-log {
   display: grid;
   gap: 10px;
-  min-height: 280px;
-  max-height: calc(100vh - 430px);
+  min-height: 260px;
+  max-height: min(48vh, 460px);
   overflow: auto;
   margin-bottom: 14px;
+}
+
+.agent-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+}
+
+.agent-modal.hidden {
+  display: none;
+}
+
+.agent-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(23, 33, 38, 0.36);
+}
+
+.agent-modal-panel {
+  position: relative;
+  z-index: 1;
+  width: min(720px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.agent-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.agent-modal-header h2 {
+  font-size: 24px;
 }
 
 .message {
@@ -936,6 +1127,17 @@ button.list-item {
 
   .map-shell {
     grid-row: 2;
+  }
+
+  .map-toolbar {
+    left: 10px;
+    right: 10px;
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .building-status {
+    max-width: 100%;
   }
 
   .sidebar {

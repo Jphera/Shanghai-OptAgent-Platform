@@ -11,6 +11,8 @@ RESULTS = SOURCE_ROOT / "results" / "core_research"
 SPATIAL = RESULTS / "intervention_and_spatial_analysis"
 BENCHMARK = RESULTS / "agent_model_benchmark"
 FULL_YEAR = RESULTS / "full_year_validation"
+ARCHETYPE = RESULTS / "archetype_strategy_analysis"
+FIGURES = SOURCE_ROOT / "results" / "figures_core_research"
 OUT = Path(__file__).resolve().parents[1] / "data" / "shanghai-platform-data.json"
 DEFAULT_SCENARIO_ID = "S3_proposed_refined_microclimate_agentic"
 
@@ -309,11 +311,30 @@ def build_unit_examples():
     return examples
 
 
+def read_text_if_exists(path):
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8", errors="ignore").strip()
+
+
+def load_optional_records(path, limit=None):
+    if not path.exists():
+        return []
+    df = pd.read_csv(path)
+    if limit is not None:
+        df = df.head(limit)
+    return records(df)
+
+
 def build_data():
     scenario = pd.read_csv(RESULTS / "scenario_summary.csv")
     strategy_mix = pd.read_csv(RESULTS / "strategy_mix_by_scenario.csv")
     budget = pd.read_csv(RESULTS / "nsga2_budget_sensitivity" / "nsga2_budget_sensitivity_summary.csv")
     model = pd.read_csv(BENCHMARK / "benchmark_score_summary_valid_models.csv")
+    archetype_rank_rows = load_optional_records(ARCHETYPE / "archetype_strategy_rank_rows.csv")
+    archetype_rank_matrix = load_optional_records(ARCHETYPE / "archetype_strategy_rank_matrix.csv")
+    policy_strategy_macc = load_optional_records(SPATIAL / "policy_translation_strategy_macc.csv")
+    policy_district_fairness = load_optional_records(SPATIAL / "policy_translation_district_fairness.csv")
 
     public_validation = None
     validation_path = FULL_YEAR / "public_building_eui_carbon_validation.csv"
@@ -345,6 +366,14 @@ def build_data():
         "budgetSensitivity": records(budget),
         "interventionLibrary": load_json(RESULTS / "intervention_library" / "formal_intervention_library.json"),
         "modelBenchmark": records(model),
+        "archetypeStrategyRankRows": archetype_rank_rows,
+        "archetypeStrategyRankMatrix": archetype_rank_matrix,
+        "policyStrategyMacc": policy_strategy_macc,
+        "policyDistrictFairness": policy_district_fairness,
+        "figureCaptions": {
+            "fig12": read_text_if_exists(FIGURES / "fig12_policy_translation_macc_equity_caption.txt"),
+            "fig15": read_text_if_exists(FIGURES / "fig15_archetype_strategy_rank_heatmap_caption.txt"),
+        },
         "publicValidation": public_validation,
         "opportunityGeojson": opportunity_geojson,
         "allocationGeojson": default_allocation,

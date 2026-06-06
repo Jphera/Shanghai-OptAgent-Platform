@@ -51,8 +51,40 @@ const FUNCTION_COLORS = {
   "办公就业类": "#286ca3",
   "商业服务类": "#d8902f",
   "公共服务类": "#7b63b7",
+  "学校类": "#bd4a42",
   "工业仓储类": "#bd4a42",
   "交通设施类": "#6c757d"
+};
+
+const SCENARIO_META = {
+  S0_old_attributes_microclimate: {
+    label: "Ablation: old attributes + microclimate",
+    note: "Pre-refinement UBEM attributes with microclimate-aware annualization."
+  },
+  S1_refined_attributes_TMY: {
+    label: "Ablation: refined attributes + TMY",
+    note: "POI-LLM refined semantics with TMY weather instead of microclimate-weighted impacts."
+  },
+  S2_refined_attributes_microclimate_energy_only: {
+    label: "Baseline: energy-only ranking",
+    note: "Refined semantics and microclimate evidence are active, but the strategy-balance guardrail is relaxed."
+  },
+  S3_proposed_refined_microclimate_agentic: {
+    label: "Proposed: refined + microclimate + agentic guardrails",
+    note: "Main OptAgent configuration: semantic refinement, microclimate-aware impacts and critic constraints are all active."
+  },
+  S4_old_attributes_deep_retrofit_microclimate: {
+    label: "Deep-retrofit check: old attributes",
+    note: "High-capital envelope/HVAC stress test under old UBEM attributes."
+  },
+  S5_refined_attributes_deep_retrofit_microclimate: {
+    label: "Deep-retrofit check: refined + microclimate",
+    note: "High-capital envelope/HVAC stress test with refined semantics and microclimate-aware annualization."
+  },
+  S6_refined_attributes_deep_retrofit_TMY: {
+    label: "Deep-retrofit check: refined + TMY",
+    note: "High-capital envelope/HVAC stress test with refined semantics and TMY weather evidence."
+  }
 };
 
 const AGENTS = {
@@ -107,6 +139,8 @@ const state = {
   scenarioId: "S3_proposed_refined_microclimate_agentic",
   strategyFilter: "all",
   colorMetric: "strategy",
+  activeBenchmarkModel: "deepseek:deepseek-chat",
+  activeArchetypeKey: null,
   popup: null,
   selectedOpportunity: null,
   selectedBuilding: null
@@ -165,6 +199,9 @@ function initMap() {
     addMapSourcesAndLayers();
     fitAllocation();
   });
+  state.map.on("idle", updateBuildingStatus);
+  state.map.on("moveend", updateBuildingStatus);
+  state.map.on("zoomend", updateBuildingStatus);
 }
 
 function getMapboxToken() {
@@ -412,9 +449,9 @@ function addBuildingTilesetLayer() {
         ["linear"],
         ["zoom"],
         cfg.minzoom || 12.5,
-        0,
-        (cfg.minzoom || 12.5) + 0.8,
-        ["coalesce", ["to-number", ["get", "height_m"]], 8]
+        ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 0.18],
+        (cfg.minzoom || 12.5) + 1.2,
+        ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 1.25]
       ],
       "fill-extrusion-base": 0,
       "fill-extrusion-opacity": [
@@ -466,6 +503,8 @@ function addBuildingTilesetLayer() {
   map.on("mouseleave", "building-fill", () => {
     map.getCanvas().style.cursor = "";
   });
+
+  updateBuildingStatus();
 }
 
 function buildingFunctionColorExpression() {
@@ -643,14 +682,11 @@ function wireLayerControls() {
 
   document.getElementById("fitView").addEventListener("click", fitAllocation);
   document.getElementById("zoomSelected").addEventListener("click", zoomSelected);
+  document.getElementById("focus3dBuildings").addEventListener("click", focus3DBuildings);
+  document.getElementById("askAgentButton").addEventListener("click", openAgentModal);
   document.getElementById("resetPitch").addEventListener("click", () => {
     if (!state.map) return;
     state.map.easeTo({ pitch: 0, bearing: 0, duration: 600 });
-  });
-
-  document.getElementById("gridSearchButton").addEventListener("click", runGridSearch);
-  document.getElementById("gridSearch").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") runGridSearch();
   });
 }
 
@@ -691,20 +727,30 @@ function renderOverview() {
 
 function renderStrategyFilter() {
   const strategySelect = document.getElementById("strategyFilter");
-  const strategies = unique(state.data.allocationGeojson.features.map((f) => f.properties.strategy_id));
+  const counts = {};
+  state.data.allocationGeojson.features.forEach((feature) => {
+    const key = feature.properties.strategy_id;
+    counts[key] = (counts[key] || 0) + Number(feature.properties.selected_units || 1);
+  });
+  const strategies = Object.keys(STRATEGIES);
   const previous = state.strategyFilter;
   strategySelect.innerHTML =
-    `<option value="all">All selected strategies</option>` +
+    `<option value="all">All selected strategies in this comparison</option>` +
     strategies
-      .map((key) => `<option value="${key}">${(STRATEGIES[key] && STRATEGIES[key].label) || key}</option>`)
+      .map((key) => {
+        const count = counts[key] || 0;
+        const disabled = count ? "" : " disabled";
+        return `<option value="${key}"${disabled}>${(STRATEGIES[key] && STRATEGIES[key].label) || key} (${formatNumber(count)} units)</option>`;
+      })
       .join("");
-  state.strategyFilter = strategies.includes(previous) ? previous : "all";
+  state.strategyFilter = strategies.includes(previous) && counts[previous] ? previous : "all";
   strategySelect.value = state.strategyFilter;
 }
 
 function renderScenarioNarrative() {
   const row = state.data.scenarioSummary.find((item) => item.scenario_id === state.scenarioId);
   if (!row) return;
+  const meta = SCENARIO_META[row.scenario_id] || {};
   const mix = state.data.strategyMix.filter((item) => item.scenario_id === row.scenario_id);
   const top = mix
     .slice()
@@ -714,7 +760,8 @@ function renderScenarioNarrative() {
     .join(", ");
 
   document.getElementById("scenarioNarrative").innerHTML = `
-    <p><strong>${scenarioLabel(row.scenario_id)}</strong> selects ${formatNumber(row.selected_units)} units and ${formatNumber(row.selected_buildings)} buildings under a ${formatCurrency(row.budget_rmb)} budget.</p>
+    <p><strong>${scenarioLabel(row.scenario_id)}</strong> is a model comparison view, not a separate policy scenario. ${meta.note || ""}</p>
+    <p>It selects ${formatNumber(row.selected_units)} units and ${formatNumber(row.selected_buildings)} buildings under a ${formatCurrency(row.budget_rmb)} budget.</p>
     <p>Annual carbon reduction is ${formatNumber(row.annual_carbon_reduction_tco2__cluster_weighted_13_14_25, 1)} tCO2/yr, with the largest strategy budget share constrained to ${formatNumber(row.largest_strategy_budget_share_pct, 1)}%.</p>
     <p>Dominant strategies: ${top || "not available"}. The full opportunity layer covers ${formatNumber((state.data.opportunityGeojson || { features: [] }).features.length)} building-stock/candidate grids; this scenario selects ${formatNumber(state.data.allocationGeojson.features.length)} budget-constrained grids.</p>
   `;
@@ -722,8 +769,9 @@ function renderScenarioNarrative() {
 
 function renderEvidence() {
   renderModelBenchmark();
+  renderArchetypeExplorer();
+  renderPolicyExplorer();
   renderBudgetChart();
-  renderInterventionLibrary();
 }
 
 function renderAgentWorkbench() {
@@ -896,7 +944,14 @@ function renderAgentRunState(steps) {
   const warnCount = guardrailRows.filter((row) => row.kind === "warn").length;
   const runCards = [
     ["Target", runTargetLabel(gridContext, building)],
-    ["Mode", localStorage.getItem(STORAGE.apiKey) ? "remote LLM + local trace" : "local deterministic trace"],
+    [
+      "Mode",
+      CONFIG.llm && CONFIG.llm.proxyEndpoint
+        ? "DeepSeek proxy + local trace"
+        : localStorage.getItem(STORAGE.apiKey)
+          ? "browser API key + local trace"
+          : "local deterministic trace"
+    ],
     ["Handoff", steps.map((step) => AGENTS[step.agentKey].short).join(" -> ")],
     ["Gate", riskCount ? `${riskCount} risk` : warnCount ? `${warnCount} watch` : "clear"]
   ];
@@ -1055,29 +1110,180 @@ function renderModelBenchmark() {
   const overall = rows
     .filter((row) => row.task_group === "OVERALL")
     .sort((a, b) => Number(b.mean_score || 0) - Number(a.mean_score || 0));
+  const container = document.getElementById("benchmarkExplorer");
+  if (!container) return;
+  if (!overall.length) {
+    container.innerHTML = `<p class="narrative">Model benchmark data are not loaded.</p>`;
+    return;
+  }
+  if (!overall.some((row) => row.model_spec === state.activeBenchmarkModel)) {
+    state.activeBenchmarkModel = overall[0].model_spec;
+  }
+  const active = overall.find((row) => row.model_spec === state.activeBenchmarkModel) || overall[0];
+  const maxScore = Math.max(...overall.map((row) => Number(row.mean_score || 0)), 1);
+  const taskRows = rows
+    .filter((row) => row.model_spec === active.model_spec && row.task_group !== "OVERALL")
+    .sort((a, b) => String(a.task_group).localeCompare(String(b.task_group)));
 
-  document.getElementById("modelBenchmark").innerHTML = overall
-    .map((row, index) => {
-      const model = modelShortLabel(row.model_spec);
-      return `
-        <button class="list-item benchmark-card" type="button" data-model-spec="${row.model_spec}">
-          <strong>${index + 1}. ${model}</strong>
-          <span>Overall score ${formatNumber(row.mean_score, 3)} | JSON validity ${formatNumber(row.parse_valid_rate * 100, 0)}% | ${formatNumber(row.mean_elapsed_sec, 2)} s/case</span>
-        </button>
-      `;
-    })
-    .join("");
+  container.innerHTML = `
+    <div class="benchmark-bars">
+      ${overall
+        .map((row, index) => {
+          const width = (Number(row.mean_score || 0) / maxScore) * 100;
+          return `
+            <button class="benchmark-row ${row.model_spec === active.model_spec ? "active" : ""}" type="button" data-model-spec="${encodeURIComponent(row.model_spec)}">
+              <span class="benchmark-row-top">
+                <strong>${index + 1}. ${modelShortLabel(row.model_spec)}</strong>
+                <span>${formatNumber(row.mean_score, 3)}</span>
+              </span>
+              <span class="rank-track"><span class="rank-fill" style="width:${width}%"></span></span>
+              <span>JSON ${formatNumber(row.parse_valid_rate * 100, 0)}% | ${formatNumber(row.mean_elapsed_sec, 2)} s/case</span>
+            </button>
+          `;
+        })
+        .join("")}
+    </div>
+    <div class="list-item">
+      <strong>${modelShortLabel(active.model_spec)} task profile</strong>
+      <p>${summarizeModel(active.model_spec)}</p>
+      <div class="task-chip-grid">
+        ${taskRows
+          .map(
+            (row) => `
+              <div class="task-chip">
+                <strong>${taskShortLabel(row.task_group)}</strong>
+                score ${formatNumber(row.mean_score, 3)}<br />
+                JSON ${formatNumber(row.parse_valid_rate * 100, 0)}%, ${formatNumber(row.mean_elapsed_sec, 2)} s
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+      <button class="wide-button inline-action" type="button" data-model-chat="${encodeURIComponent(active.model_spec)}">Ask OptAgent about this model</button>
+    </div>
+  `;
 
-  document.querySelectorAll("[data-model-spec]").forEach((button) => {
+  container.querySelectorAll("[data-model-spec]").forEach((button) => {
     button.addEventListener("click", () => {
-      const spec = button.dataset.modelSpec;
-      const message = `Explain benchmark performance for ${spec}`;
-      addChatMessage("user", message);
-      addChatMessage("assistant", summarizeModel(spec));
-      state.activePanel = "chat";
-      document.querySelector('[data-panel-target="chat"]').click();
+      state.activeBenchmarkModel = decodeURIComponent(button.dataset.modelSpec);
+      renderModelBenchmark();
     });
   });
+  container.querySelectorAll("[data-model-chat]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const spec = decodeURIComponent(button.dataset.modelChat);
+      const message = `Explain benchmark performance for ${spec}`;
+      openAgentModal();
+      addChatMessage("user", message);
+      addChatMessage("assistant", summarizeModel(spec));
+    });
+  });
+}
+
+function renderArchetypeExplorer() {
+  const rows = state.data.archetypeStrategyRankRows || [];
+  const matrix = state.data.archetypeStrategyRankMatrix || [];
+  const container = document.getElementById("archetypeExplorer");
+  if (!container) return;
+  if (!rows.length) {
+    container.innerHTML = `<p class="narrative">Archetype strategy ranking data are not loaded.</p>`;
+    return;
+  }
+  const ordered = rows
+    .slice()
+    .sort((a, b) => Number(b.selected_annual_carbon_tco2 || 0) - Number(a.selected_annual_carbon_tco2 || 0))
+    .slice(0, 12);
+  if (!state.activeArchetypeKey || !ordered.some((row) => row.row_key === state.activeArchetypeKey)) {
+    state.activeArchetypeKey = ordered[0].row_key;
+  }
+  const active = ordered.find((row) => row.row_key === state.activeArchetypeKey) || ordered[0];
+  const strategies = matrix
+    .filter((row) => row.row_key === active.row_key)
+    .sort((a, b) => Number(a.rank || 999) - Number(b.rank || 999));
+  const maxCarbon = Math.max(...ordered.map((row) => Number(row.selected_annual_carbon_tco2 || 0)), 1);
+  container.innerHTML = `
+    <div class="archetype-list">
+      ${ordered
+        .map((row) => {
+          const width = (Number(row.selected_annual_carbon_tco2 || 0) / maxCarbon) * 100;
+          return `
+            <button class="archetype-row ${row.row_key === active.row_key ? "active" : ""}" type="button" data-archetype-key="${encodeURIComponent(row.row_key)}">
+              <span class="archetype-row-top">
+                <strong>${escapeHtml(row.fine_function_en || row.refined_function_label || row.row_key)}</strong>
+                <span>${formatNumber(row.selected_annual_carbon_tco2, 0)} tCO2/yr</span>
+              </span>
+              <span class="rank-track"><span class="rank-fill" style="width:${width}%"></span></span>
+              <span>${escapeHtml(row.refined_vintage_bin || "vintage n/a")} | ${escapeHtml(row.thermal_template || "template n/a")} | ${formatNumber(row.selected_buildings)} buildings</span>
+            </button>
+          `;
+        })
+        .join("")}
+    </div>
+    <div class="list-item">
+      <strong>${escapeHtml(active.fine_function_en || active.refined_function_label || active.row_key)}</strong>
+      <p>Candidate strategies are ranked within this refined building archetype. An emphasized chip means at least one selected NSGA-II unit used that strategy.</p>
+      <div class="strategy-chip-grid">
+        ${strategies
+          .map(
+            (row) => `
+              <div class="strategy-chip ${truthy(row.selected_in_nsga2) ? "selected" : ""}">
+                <strong>#${formatNumber(row.rank)} ${strategyLabel(row.strategy_id)}</strong>
+                priority ${formatNumber(row.priority_score, 3)}<br />
+                candidate ${formatNumber(row.candidate_annual_carbon_tco2, 0)} tCO2/yr
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+  container.querySelectorAll("[data-archetype-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeArchetypeKey = decodeURIComponent(button.dataset.archetypeKey);
+      renderArchetypeExplorer();
+    });
+  });
+}
+
+function renderPolicyExplorer() {
+  const macc = state.data.policyStrategyMacc || [];
+  const fairness = state.data.policyDistrictFairness || [];
+  const container = document.getElementById("policyExplorer");
+  if (!container) return;
+  if (!macc.length) {
+    container.innerHTML = `<p class="narrative">Policy translation data are not loaded.</p>`;
+    return;
+  }
+  const strategies = macc
+    .slice()
+    .sort((a, b) => Number(a.selected_net_macc_rmb_per_tco2 ?? a.net_macc_rmb_per_tco2 ?? 0) - Number(b.selected_net_macc_rmb_per_tco2 ?? b.net_macc_rmb_per_tco2 ?? 0));
+  const districts = fairness
+    .slice()
+    .sort((a, b) => Number(b.selected_annual_carbon_tco2 || 0) - Number(a.selected_annual_carbon_tco2 || 0))
+    .slice(0, 5);
+  container.innerHTML = `
+    <div class="policy-list">
+      ${strategies
+        .map(
+          (row) => `
+            <div class="policy-row">
+              <span class="policy-row-top">
+                <strong>${strategyLabel(row.strategy_id)}</strong>
+                <span>${formatCurrency(row.selected_net_macc_rmb_per_tco2 ?? row.net_macc_rmb_per_tco2)} / tCO2</span>
+              </span>
+              <span>${formatNumber(row.selected_buildings || 0)} selected buildings | ${formatNumber(row.selected_annual_carbon_reduction_tco2 || row.annual_carbon_reduction_tco2, 0)} tCO2/yr</span>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+    <div class="list-item">
+      <strong>Top selected-abatement districts</strong>
+      <p>${districts
+        .map((row) => `${row.district_label || row.district_name}: ${formatNumber(row.selected_annual_carbon_tco2, 0)} tCO2/yr`)
+        .join("; ")}.</p>
+    </div>
+  `;
 }
 
 function modelShortLabel(spec) {
@@ -1110,25 +1316,6 @@ function renderBudgetChart() {
           <span>${formatBudgetShort(budget)}</span>
           <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
           <span>${formatNumber(value / 1000, 1)} kt</span>
-        </div>
-      `;
-    })
-    .join("");
-}
-
-function renderInterventionLibrary() {
-  const raw = state.data.interventionLibrary;
-  const items = Array.isArray(raw) ? raw : Object.values(raw || {});
-  document.getElementById("interventionLibrary").innerHTML = items
-    .slice(0, 11)
-    .map((item) => {
-      const id = item.strategy_id || item.id || item.name || "strategy";
-      const label = item.strategy_name || item.label || item.intervention_name || id;
-      const family = item.family || item.strategy_family || "intervention";
-      return `
-        <div class="list-item">
-          <strong>${label}</strong>
-          <span>${family} | ${id}</span>
         </div>
       `;
     })
@@ -1571,17 +1758,42 @@ function renderUnitExamples(gridId) {
       .join("");
 }
 
-function runGridSearch() {
-  const raw = document.getElementById("gridSearch").value.trim();
-  if (!raw) return;
-  const gridId = Number(raw);
-  const feature = state.data.allocationGeojson.features.find((item) => Number(item.properties.grid_id) === gridId);
-  if (!feature) {
-    addChatMessage("assistant", `I could not find grid ${raw} in the selected allocation layer.`);
+function focus3DBuildings() {
+  if (!state.map) return;
+  const target = state.selectedBuilding
+    ? [Number(state.selectedBuilding.properties.center_lon), Number(state.selectedBuilding.properties.center_lat)]
+    : featureCenter(state.selectedFeature || state.selectedOpportunity) || [121.4737, 31.2304];
+  state.map.easeTo({
+    center: target.every(Number.isFinite) ? target : [121.4737, 31.2304],
+    zoom: Math.max(state.map.getZoom(), 14.2),
+    pitch: 62,
+    bearing: -22,
+    duration: 800
+  });
+  updateBuildingStatus();
+}
+
+function updateBuildingStatus() {
+  const node = document.getElementById("buildingStatus");
+  if (!node || !state.map) return;
+  const cfg = CONFIG.buildingTileset || {};
+  if (!cfg.enabled) {
+    node.textContent = "3D buildings disabled";
     return;
   }
-  selectFeature(feature);
-  zoomToFeature(feature);
+  if (!state.map.getLayer("building-fill")) {
+    node.textContent = "3D buildings layer not loaded";
+    return;
+  }
+  const minzoom = cfg.minzoom || 11;
+  if (state.map.getZoom() < minzoom) {
+    node.textContent = `3D buildings visible after z${formatNumber(minzoom, 1)}`;
+    return;
+  }
+  const features = state.map.queryRenderedFeatures({ layers: ["building-fill"] });
+  node.textContent = features.length
+    ? `3D buildings: ${formatNumber(features.length)} visible`
+    : "3D buildings: no features in view";
 }
 
 function fitAllocation() {
@@ -1591,17 +1803,29 @@ function fitAllocation() {
 }
 
 function zoomSelected() {
-  if (!state.selectedFeature) {
+  const feature = state.selectedFeature || state.selectedOpportunity;
+  if (state.selectedBuilding) {
+    focus3DBuildings();
+    return;
+  }
+  if (!feature) {
     fitAllocation();
     return;
   }
-  zoomToFeature(state.selectedFeature);
+  zoomToFeature(feature);
 }
 
 function zoomToFeature(feature) {
   if (!state.map) return;
   const bounds = featureBounds(feature);
-  if (bounds) state.map.fitBounds(bounds, { padding: 90, duration: 700, maxZoom: 13.5 });
+  if (bounds) state.map.fitBounds(bounds, { padding: 90, duration: 700, maxZoom: 14.5, pitch: 58, bearing: -18 });
+}
+
+function featureCenter(feature) {
+  if (!feature) return null;
+  const bounds = featureBounds(feature);
+  if (!bounds) return null;
+  return [(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2];
 }
 
 function featureCollectionBounds(collection) {
@@ -1651,6 +1875,11 @@ function extendBounds(a, b) {
 }
 
 function wireChat() {
+  document.getElementById("closeAgentModal").addEventListener("click", closeAgentModal);
+  document.getElementById("agentModalBackdrop").addEventListener("click", closeAgentModal);
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeAgentModal();
+  });
   document.getElementById("saveApiSettings").addEventListener("click", saveApiSettings);
   document.querySelectorAll("[data-agent-prompt]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -1684,6 +1913,19 @@ function wireChat() {
     "assistant",
     "Select a building, opportunity grid, or selected allocation grid, then ask about retrofit priority, constraints, budget sensitivity, semantic confidence, or the 10-model benchmark. If no secure proxy is configured, I use a deterministic local agent over the loaded research data."
   );
+}
+
+function openAgentModal() {
+  const modal = document.getElementById("agentModal");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  const input = document.getElementById("chatInput");
+  if (input) input.focus();
+}
+
+function closeAgentModal() {
+  const modal = document.getElementById("agentModal");
+  if (modal) modal.classList.add("hidden");
 }
 
 function restoreApiSettings() {
@@ -1933,6 +2175,7 @@ function addChatMessage(role, text) {
 }
 
 function scenarioLabel(id) {
+  if (SCENARIO_META[id]) return SCENARIO_META[id].label;
   const labels = {
     S0_old_attributes_microclimate: "S0 old attributes, microclimate",
     S1_refined_attributes_TMY: "S1 refined attributes, TMY",
@@ -1951,6 +2194,22 @@ function strategyLabel(id) {
 
 function unique(values) {
   return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function truthy(value) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") return ["true", "1", "yes"].includes(value.toLowerCase());
+  return Boolean(value);
 }
 
 function formatNumber(value, digits = 0) {

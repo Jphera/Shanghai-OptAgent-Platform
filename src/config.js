@@ -21,7 +21,7 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
     enabled: true,
     sourceUrl: "mapbox://jpyjpy.vqqao0uef4p8",
     sourceLayer: "66de023c0080f21b24ff",
-    minzoom: 12.5,
+    minzoom: 11,
     note: "Mapbox Studio tileset 08_shanghai_buildings_footprints. Source-layer id was read from TileJSON vector_layers."
   }
 };

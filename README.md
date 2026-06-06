@@ -69,6 +69,20 @@ The platform bundles two 500 m grid layers:
 
 The full 592,795-building footprint layer is not bundled into GitHub Pages; it is hosted as a Mapbox vector tileset and joined in the frontend through `src/config.js`. The frontend renders this layer as 3D `fill-extrusion` using the tileset `height_m` property.
 
+The dropdown in the Overview panel is a model-comparison / ablation selector generated from `scenario_summary.csv`, not a set of independent policy scenarios. The proposed paper configuration is:
+
+```text
+S3_proposed_refined_microclimate_agentic
+```
+
+The other entries compare old vs refined semantics, TMY vs microclimate annualization, energy-only ranking, and deep-retrofit stress tests.
+
+The Evidence panel also loads:
+
+- `archetype_strategy_rank_rows.csv` and `archetype_strategy_rank_matrix.csv` for the building-type retrofit ranking
+- `policy_translation_strategy_macc.csv` and `policy_translation_district_fairness.csv` for policy cost and equity evidence
+- Figure assets for Fig. 12 and Fig. 15 as visual references alongside the interactive tables
+
 ## Current Mapbox Building Tileset
 
 The active building click layer is configured in `src/config.js`:
@@ -78,11 +92,17 @@ buildingTileset: {
   enabled: true,
   sourceUrl: "mapbox://jpyjpy.vqqao0uef4p8",
   sourceLayer: "66de023c0080f21b24ff",
-  minzoom: 12.5
+  minzoom: 11
 }
 ```
 
 The source layer id was read from the Mapbox TileJSON `vector_layers` response after upload. The uploaded Studio tileset is based on `08_shanghai_buildings_footprints.geojson`, a standard GeoJSON `FeatureCollection` with 592,795 building footprint features.
+
+If 3D buildings are not visible, use the `3D buildings` toolbar button. The status chip on the map reports whether visible vector features are currently loaded. The source CSV is:
+
+```text
+F:\博士文件\石老师课题组\6.AI-agent-LLM\data\shanghai_all_jpy_with_llm_attrs.csv
+```
 
 ## Mapbox Studio GeoJSON Upload
 
