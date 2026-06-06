@@ -160,6 +160,19 @@ After publishing the tileset, set `buildingTileset.enabled = true`, `sourceUrl`,
 
 The site is designed for GitHub Pages. Pushes to `main` run `.github/workflows/pages.yml`, which publishes the static site to the `gh-pages` branch.
 
+The workflow also makes a best-effort GitHub Pages API call to create the Pages site from:
+
+```text
+branch: gh-pages
+folder: /root
+```
+
+If the public URL still returns 404 after a successful workflow run, enable it manually from repository settings:
+
+```text
+Settings -> Pages -> Build and deployment -> Deploy from a branch -> gh-pages -> /root
+```
+
 Expected project URL:
 
 ```text
