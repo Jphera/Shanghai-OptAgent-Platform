@@ -14,10 +14,10 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
     model: "deepseek-chat"
   },
   buildingTileset: {
-    enabled: false,
-    sourceUrl: "mapbox://YOUR_MAPBOX_USERNAME.shanghai_buildings_footprints",
-    sourceLayer: "shanghai_buildings",
+    enabled: true,
+    sourceUrl: "mapbox://jpyjpy.vqqao0uef4p8",
+    sourceLayer: "66de023c0080f21b24ff",
     minzoom: 12.5,
-    note: "Upload mapbox_sources/shanghai_buildings_footprints.ldgeojson as a Mapbox tileset, then set enabled to true."
+    note: "Mapbox Studio tileset 08_shanghai_buildings_footprints. Source-layer id was read from TileJSON vector_layers."
   }
 };

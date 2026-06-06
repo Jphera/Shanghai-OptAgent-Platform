@@ -26,13 +26,13 @@ http://localhost:4173
 
 ## Mapbox Token
 
-The app uses Mapbox GL JS for the basemap. For security, no token is committed.
+The app uses Mapbox GL JS for the basemap.
 
-Use either:
+No Mapbox token is committed because GitHub Push Protection treats Mapbox tokens as secrets. Use one of these runtime options:
 
-- the token field in the app settings panel
-- `?mapbox_token=YOUR_TOKEN` in the URL
 - `window.SHANGHAI_OPTAGENT_CONFIG.mapboxAccessToken` in `src/config.js`
+- paste a public `pk...` token into the in-app Mapbox token prompt
+- append `?mapbox_token=YOUR_PUBLIC_TOKEN` to the URL
 
 Public Mapbox browser tokens are acceptable for static sites, but they should be restricted by URL in the Mapbox dashboard after deployment.
 
@@ -50,11 +50,48 @@ Regenerate from the research outputs:
 python scripts/build_platform_data.py
 ```
 
-The current first release uses the 1,369 selected NSGA-II 500 m allocation grids as the primary clickable map layer. The full 592,795-building stock CSV is intentionally not bundled into GitHub Pages. For a true building-footprint click layer, convert the building stock into a Mapbox tileset and reference it in `src/config.js`.
+The platform bundles the 1,369 selected NSGA-II 500 m allocation grids as the medium-zoom decision layer. The full 592,795-building footprint layer is not bundled into GitHub Pages; it is hosted as a Mapbox vector tileset and joined in the frontend through `src/config.js`.
+
+## Current Mapbox Building Tileset
+
+The active building click layer is configured in `src/config.js`:
+
+```js
+buildingTileset: {
+  enabled: true,
+  sourceUrl: "mapbox://jpyjpy.vqqao0uef4p8",
+  sourceLayer: "66de023c0080f21b24ff",
+  minzoom: 12.5
+}
+```
+
+The source layer id was read from the Mapbox TileJSON `vector_layers` response after upload. The uploaded Studio tileset is based on `08_shanghai_buildings_footprints.geojson`, a standard GeoJSON `FeatureCollection` with 592,795 building footprint features.
+
+## Mapbox Studio GeoJSON Upload
+
+For the user's current Mapbox workflow, use the standard GeoJSON export instead of line-delimited GeoJSON or MBTiles:
+
+```powershell
+python .\scripts\build_mapbox_studio_geojson.py
+```
+
+Generated local upload directory:
+
+```text
+mapbox_studio_upload/
+```
+
+The uploaded file keeps the compact fields needed by the platform:
+
+```text
+objectid, grid_id, height_m, footprint_m2, building_type, fine_function, final_year, thermal_template, ml_probability
+```
+
+If Mapbox Studio reports a 300 MB limit again, keep the exported geometry precision and property set compact. The current single-file export is about 253 MB, below the web upload limit.
 
 ## Full Building Footprint Tileset
 
-The 592,795-building click layer can now be uploaded as a real Mapbox vector tileset file.
+An MBTiles export is also available as a fallback workflow.
 
 Generate the `.mbtiles` file:
 

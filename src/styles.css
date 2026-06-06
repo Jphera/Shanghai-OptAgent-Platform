@@ -514,6 +514,137 @@ h2 {
   gap: 10px;
 }
 
+.agent-workbench {
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.agent-card-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-card {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  min-height: 82px;
+  padding: 12px;
+  border-left: 5px solid var(--agent-color);
+  text-align: left;
+  background: #ffffff;
+}
+
+.agent-card.active {
+  border-color: var(--agent-color);
+  background: linear-gradient(90deg, rgba(22, 122, 117, 0.1), #ffffff 34%);
+  box-shadow: 0 8px 20px rgba(20, 31, 36, 0.08);
+}
+
+.agent-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-card-top strong {
+  font-size: 14px;
+}
+
+.agent-card-top em {
+  font-style: normal;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.agent-card > span:last-child {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.agent-trace {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.trace-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.trace-step.risk {
+  border-color: rgba(189, 74, 66, 0.36);
+  background: rgba(189, 74, 66, 0.06);
+}
+
+.trace-index {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: #ffffff;
+  background: var(--agent-color);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.trace-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.trace-head strong {
+  font-size: 13px;
+}
+
+.trace-head span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.trace-step p {
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.trace-step em {
+  color: var(--teal);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.quick-prompt-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.quick-prompt-grid button {
+  min-height: 42px;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .list-item {
   padding: 12px;
   border: 1px solid var(--line);

@@ -55,10 +55,54 @@ const FUNCTION_COLORS = {
   "交通设施类": "#6c757d"
 };
 
+const AGENTS = {
+  data: {
+    label: "Data Agent",
+    short: "Data",
+    role: "GIS, POI-LLM semantics, LCZ and MUBEM outputs are fused into decision units.",
+    tools: ["load_semantic_stock", "identify_microclimate_hotspots", "build_decision_units"],
+    output: "BuildingStockSummary, HotspotSet, SemanticDecisionUnit",
+    color: "#286ca3"
+  },
+  knowledge: {
+    label: "Knowledge Agent",
+    short: "Knowledge",
+    role: "RAG-grounded retrofit, policy, cost, comfort-risk and applicability constraints.",
+    tools: ["retrieve_policy_constraints", "load_intervention_library", "bind_evidence_bundle"],
+    output: "InterventionLibrary, PolicyConstraintSet, EvidenceBundle",
+    color: "#7b63b7"
+  },
+  scenario: {
+    label: "Scenario Agent",
+    short: "Scenario",
+    role: "Candidate strategy matrix generation and infeasible combination screening.",
+    tools: ["generate_intervention_candidates", "screen_function_vintage_rules", "score_candidate_feasibility"],
+    output: "FeasibilityMatrix, InterventionPackage, DecisionVariableSet",
+    color: "#d8902f"
+  },
+  optimization: {
+    label: "Optimization Agent",
+    short: "Optimize",
+    role: "NSGA-II portfolio allocation and MILP baseline comparison under budget constraints.",
+    tools: ["score_energy_carbon_cost", "optimize_retrofit_portfolio", "compare_milp_baseline"],
+    output: "ParetoSolutionSet, SelectedStrategyMap, CostCarbonSummary",
+    color: "#167a75"
+  },
+  critic: {
+    label: "Critic Agent",
+    short: "Critic",
+    role: "Constraint audit, concentration checks, evidence trace and comfort-risk warnings.",
+    tools: ["critic_check_constraints", "audit_strategy_concentration", "export_trace_report"],
+    output: "CritiqueReport, ConstraintViolationList, RevisionRequest",
+    color: "#bd4a42"
+  }
+};
+
 const state = {
   data: null,
   map: null,
   activePanel: "overview",
+  activeAgent: "data",
   selectedFeature: null,
   scenarioId: "S3_proposed_refined_microclimate_agentic",
   strategyFilter: "all",
@@ -79,6 +123,8 @@ async function init() {
   state.data = await loadData();
   renderOverview();
   renderEvidence();
+  renderAgentWorkbench();
+  renderAgentTrace(buildAgentTrace("Initialize the Shanghai OptAgent workflow."));
   renderEmptySelection();
   initMap();
 }
@@ -204,6 +250,17 @@ function addMapSourcesAndLayers() {
   });
 
   map.addLayer({
+    id: "agent-highlight-fill",
+    type: "fill",
+    source: "allocation",
+    filter: ["in", ["get", "grid_id"], ["literal", []]],
+    paint: {
+      "fill-color": "#172126",
+      "fill-opacity": 0.24
+    }
+  });
+
+  map.addLayer({
     id: "allocation-selected-line",
     type: "line",
     source: "allocation",
@@ -324,7 +381,7 @@ function addBuildingTilesetLayer() {
 }
 
 function buildingFunctionColorExpression() {
-  const expression = ["match", ["get", "coarse_function"]];
+  const expression = ["match", ["coalesce", ["get", "building_type"], ["get", "coarse_function"]]];
   Object.entries(FUNCTION_COLORS).forEach(([key, color]) => expression.push(key, color));
   expression.push("#8d989d");
   return expression;
@@ -418,7 +475,7 @@ function wireLayerControls() {
   });
 
   document.getElementById("toggleAllocation").addEventListener("change", (event) => {
-    setLayerVisibility(["allocation-fill", "allocation-line", "allocation-selected-line"], event.target.checked);
+    setLayerVisibility(["allocation-fill", "allocation-line", "allocation-selected-line", "agent-highlight-fill"], event.target.checked);
   });
 
   document.getElementById("toggleBuildings").addEventListener("change", (event) => {
@@ -506,6 +563,163 @@ function renderEvidence() {
   renderModelBenchmark();
   renderBudgetChart();
   renderInterventionLibrary();
+}
+
+function renderAgentWorkbench() {
+  const container = document.getElementById("agentCards");
+  if (!container) return;
+  const selected = state.selectedFeature ? state.selectedFeature.properties : null;
+  const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
+
+  container.innerHTML = Object.entries(AGENTS)
+    .map(([key, agent]) => {
+      const status = agentStatus(key, selected, building);
+      return `
+        <button class="agent-card ${state.activeAgent === key ? "active" : ""}" type="button" data-agent-key="${key}" style="--agent-color:${agent.color}">
+          <span class="agent-card-top">
+            <strong>${agent.short}</strong>
+            <em>${status}</em>
+          </span>
+          <span>${agent.role}</span>
+        </button>
+      `;
+    })
+    .join("");
+
+  container.querySelectorAll("[data-agent-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeAgent = button.dataset.agentKey;
+      renderAgentWorkbench();
+      renderAgentTrace(buildAgentTrace(`Focus ${AGENTS[state.activeAgent].label}.`));
+    });
+  });
+}
+
+function agentStatus(key, selected, building) {
+  if (key === "data" && building) return "building linked";
+  if (key === "data" && selected) return "grid linked";
+  if (key === "knowledge") return selected || building ? "evidence ready" : "library ready";
+  if (key === "scenario") return selected ? "candidates bound" : "awaiting grid";
+  if (key === "optimization") return selected ? "portfolio selected" : "scenario ready";
+  if (key === "critic") return selected || building ? "audit ready" : "standing by";
+  return "ready";
+}
+
+function buildAgentTrace(prompt) {
+  const selected = state.selectedFeature ? state.selectedFeature.properties : null;
+  const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
+  const scenario = state.data
+    ? state.data.scenarioSummary.find((row) => row.scenario_id === state.scenarioId)
+    : null;
+
+  return [
+    buildDataAgentStep(prompt, selected, building),
+    buildKnowledgeAgentStep(selected, building),
+    buildScenarioAgentStep(selected, building),
+    buildOptimizationAgentStep(selected, scenario),
+    buildCriticAgentStep(selected, building)
+  ];
+}
+
+function buildDataAgentStep(prompt, selected, building) {
+  const metrics = state.data ? state.data.coreMetrics : {};
+  const text = building
+    ? `Selected building ${building.bldg_id} is ${building.coarse_function || "unknown function"}, ${building.age_bin || "unknown vintage"}, grid ${building.grid_id || "n/a"}.`
+    : selected
+      ? `Selected grid ${selected.grid_id} contains ${formatNumber(selected.n_buildings || selected.selected_buildings)} buildings, LCZ ${selected.LCZ_mode || "n/a"}, and ${formatNumber(selected.floor_area_m2, 0)} m2 floor area proxy.`
+      : `Shanghai stock contains ${formatNumber(metrics.building_count_in_units)} buildings compressed into ${formatNumber(metrics.optimization_units)} semantic decision units.`;
+  return agentStepObject("data", "load_semantic_stock", text, prompt);
+}
+
+function buildKnowledgeAgentStep(selected, building) {
+  const strategy = selected ? strategyLabel(selected.strategy_id) : "formal intervention library";
+  const text = selected
+    ? `${strategy} is checked against function-vintage applicability and evidence-coded retrofit rules.`
+    : `The library holds RAG-grounded retrofit families, costs, applicability and comfort-risk notes.`;
+  return agentStepObject("knowledge", "retrieve_policy_constraints", text);
+}
+
+function buildScenarioAgentStep(selected, building) {
+  const text = selected
+    ? `${formatNumber(selected.candidate_units || selected.selected_units)} candidate units were screened in this grid; selected strategy is ${strategyLabel(selected.strategy_id)}.`
+    : building
+      ? `Building semantics can be promoted into a future what-if candidate through grid + function + vintage + template.`
+      : `Candidate rows and feasibility matrix are available for scenario-level interrogation.`;
+  return agentStepObject("scenario", "generate_intervention_candidates", text);
+}
+
+function buildOptimizationAgentStep(selected, scenario) {
+  const text = selected
+    ? `NSGA-II selected ${formatNumber(selected.selected_units)} units and ${formatNumber(selected.selected_buildings)} buildings here for ${formatNumber(selected.annual_carbon_reduction_tco2, 1)} tCO2/yr.`
+    : scenario
+      ? `${scenarioLabel(scenario.scenario_id)} covers ${formatNumber(scenario.selected_buildings)} buildings and reduces ${formatNumber(scenario.annual_carbon_reduction_tco2__cluster_weighted_13_14_25, 1)} tCO2/yr.`
+      : `Optimization portfolio is ready for NSGA-II/MILP comparison.`;
+  return agentStepObject("optimization", "optimize_retrofit_portfolio", text);
+}
+
+function buildCriticAgentStep(selected, building) {
+  const text = selected
+    ? criticText(selected, null)
+    : building
+      ? buildingCriticText(building, null)
+      : `Standing audit checks budget, strategy concentration, missing evidence, comfort-risk and full-year-baseline anchoring.`;
+  const risk = selected && Number(selected.max_microclimate_sensitivity_pct || 0) > 18;
+  return agentStepObject("critic", "critic_check_constraints", text, null, risk ? "risk" : "");
+}
+
+function agentStepObject(agentKey, tool, text, prompt = null, kind = "") {
+  const agent = AGENTS[agentKey];
+  return {
+    agentKey,
+    agent: agent.label,
+    tool,
+    text,
+    prompt,
+    output: agent.output,
+    kind
+  };
+}
+
+function renderAgentTrace(steps) {
+  const container = document.getElementById("agentTrace");
+  if (!container) return;
+  container.innerHTML = steps
+    .map((step, index) => {
+      const agent = AGENTS[step.agentKey];
+      return `
+        <div class="trace-step ${step.kind || ""}" style="--agent-color:${agent.color}">
+          <div class="trace-index">${index + 1}</div>
+          <div>
+            <div class="trace-head">
+              <strong>${step.agent}</strong>
+              <span>${step.tool}</span>
+            </div>
+            <p>${step.text}</p>
+            <em>${step.output}</em>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function highlightAgentHotspots(kind = "selected") {
+  if (!state.map || !state.map.getLayer("agent-highlight-fill")) return;
+  let ids = [];
+  if (kind === "hotspots") {
+    ids = state.data.allocationGeojson.features
+      .slice()
+      .sort(
+        (a, b) =>
+          Number(b.properties.max_microclimate_sensitivity_pct || 0) -
+          Number(a.properties.max_microclimate_sensitivity_pct || 0)
+      )
+      .slice(0, 35)
+      .map((feature) => Number(feature.properties.grid_id));
+  } else if (state.selectedFeature) {
+    ids = [Number(state.selectedFeature.properties.grid_id)];
+  }
+  state.map.setFilter("agent-highlight-fill", ["in", ["get", "grid_id"], ["literal", ids]]);
 }
 
 function renderModelBenchmark() {
@@ -625,11 +839,18 @@ function selectFeature(feature, lngLat) {
   }
 
   renderSelected();
+  renderAgentWorkbench();
+  renderAgentTrace(buildAgentTrace(`Inspect selected grid ${p.grid_id}.`));
+  highlightAgentHotspots("selected");
 }
 
 function selectBuildingFeature(feature, lngLat) {
-  state.selectedBuilding = feature;
-  const p = feature.properties;
+  const normalizedFeature = {
+    ...feature,
+    properties: normalizeBuildingProperties(feature.properties || {})
+  };
+  state.selectedBuilding = normalizedFeature;
+  const p = normalizedFeature.properties;
   const gridId = Number(p.grid_id);
   const gridFeature = state.data.allocationGeojson.features.find(
     (item) => Number(item.properties.grid_id) === gridId
@@ -637,7 +858,11 @@ function selectBuildingFeature(feature, lngLat) {
   state.selectedFeature = gridFeature || null;
 
   if (state.map && state.map.getLayer("building-selected-line")) {
-    state.map.setFilter("building-selected-line", ["==", ["get", "bldg_id"], Number(p.bldg_id)]);
+    state.map.setFilter("building-selected-line", [
+      "any",
+      ["==", ["get", "bldg_id"], Number(p.bldg_id)],
+      ["==", ["get", "objectid"], Number(p.bldg_id)]
+    ]);
   }
   if (state.map && state.map.getLayer("allocation-selected-line")) {
     state.map.setFilter("allocation-selected-line", [
@@ -660,6 +885,26 @@ function selectBuildingFeature(feature, lngLat) {
   }
 
   renderSelectedBuilding();
+  renderAgentWorkbench();
+  renderAgentTrace(buildAgentTrace(`Inspect selected building ${p.bldg_id}.`));
+  highlightAgentHotspots("selected");
+}
+
+function normalizeBuildingProperties(raw) {
+  return {
+    ...raw,
+    bldg_id: raw.bldg_id ?? raw.objectid,
+    coarse_function: raw.coarse_function ?? raw.building_type,
+    fine_function: raw.fine_function,
+    age_bin: raw.age_bin ?? raw.final_year,
+    llm_confidence: raw.llm_confidence ?? raw.ml_probability,
+    height_m: raw.height_m,
+    footprint_m2: raw.footprint_m2,
+    thermal_template: raw.thermal_template,
+    grid_id: raw.grid_id,
+    center_lon: raw.center_lon,
+    center_lat: raw.center_lat
+  };
 }
 
 function renderEmptySelection() {
@@ -710,7 +955,7 @@ function renderSelectedBuilding() {
   document.getElementById("agentSteps").innerHTML = `
     <div class="agent-step">
       <h3>Data Agent: building semantics</h3>
-      <p>${p.fine_function || p.coarse_function || "Unknown refined function"}; source type ${p.source_type || "n/a"}; source age ${p.source_age || "n/a"}.</p>
+      <p>${p.fine_function || p.coarse_function || "Unknown refined function"}; source function ${p.coarse_function || "n/a"}; vintage ${p.age_bin || "n/a"}.</p>
     </div>
     <div class="agent-step">
       <h3>Decision-unit linkage</h3>
@@ -725,11 +970,11 @@ function renderSelectedBuilding() {
   document.getElementById("unitExamples").innerHTML = `
     <div class="section-title">Semantic reasoning</div>
     <div class="unit-card">
-      <p>${p.semantic_reason || "No semantic reasoning text is available in the tileset output for this building."}</p>
+      <p>${p.fine_function || p.coarse_function || "This building"} is bound to a semantic decision unit through grid, refined function, vintage and thermal template. The web tileset keeps compact fields for click performance; detailed POI reasoning remains in the source CSV.</p>
       <div class="tag-row">
         <span class="tag">Grid ${p.grid_id || "n/a"}</span>
-        <span class="tag">${p.cooling_cop ? `Cooling COP ${p.cooling_cop}` : "COP n/a"}</span>
-        <span class="tag">${p.heating_cop ? `Heating COP ${p.heating_cop}` : "Heating COP n/a"}</span>
+        <span class="tag">${p.thermal_template || "template n/a"}</span>
+        <span class="tag">${formatNumber(p.llm_confidence, 2)} confidence</span>
       </div>
     </div>
   `;
@@ -917,6 +1162,20 @@ function extendBounds(a, b) {
 
 function wireChat() {
   document.getElementById("saveApiSettings").addEventListener("click", saveApiSettings);
+  document.querySelectorAll("[data-agent-prompt]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const prompt = button.dataset.agentPrompt;
+      addChatMessage("user", prompt);
+      renderAgentTrace(buildAgentTrace(prompt));
+      if (prompt.toLowerCase().includes("hotspot")) {
+        highlightAgentHotspots("hotspots");
+      } else {
+        highlightAgentHotspots("selected");
+      }
+      const reply = await answerQuestion(prompt);
+      addChatMessage("assistant", reply);
+    });
+  });
   document.getElementById("chatForm").addEventListener("submit", async (event) => {
     event.preventDefault();
     const input = document.getElementById("chatInput");
@@ -924,6 +1183,10 @@ function wireChat() {
     if (!message) return;
     input.value = "";
     addChatMessage("user", message);
+    renderAgentTrace(buildAgentTrace(message));
+    if (message.toLowerCase().includes("hotspot")) {
+      highlightAgentHotspots("hotspots");
+    }
     const reply = await answerQuestion(message);
     addChatMessage("assistant", reply);
   });
@@ -1012,6 +1275,29 @@ function buildContextPrompt() {
 
 function localAgentAnswer(message) {
   const text = message.toLowerCase();
+  if (text.includes("hotspot") || text.includes("热点")) {
+    const top = state.data.allocationGeojson.features
+      .slice()
+      .sort(
+        (a, b) =>
+          Number(b.properties.max_microclimate_sensitivity_pct || 0) -
+          Number(a.properties.max_microclimate_sensitivity_pct || 0)
+      )
+      .slice(0, 5)
+      .map((feature) => {
+        const p = feature.properties;
+        return `grid ${p.grid_id} (${formatNumber(p.max_microclimate_sensitivity_pct, 1)}%, ${strategyLabel(p.strategy_id)})`;
+      })
+      .join("; ");
+    return `Five-agent run complete. Data Agent ranked microclimate sensitivity, Scenario Agent preserved feasible strategies, Optimization Agent kept the selected portfolio, and Critic Agent highlighted the top grids on the map. Top hotspots: ${top}.`;
+  }
+  if (text.includes("compare") || text.includes("baseline") || text.includes("对比")) {
+    const s2 = state.data.scenarioSummary.find((row) => row.scenario_id === "S2_refined_attributes_microclimate_energy_only");
+    const s3 = state.data.scenarioSummary.find((row) => row.scenario_id === "S3_proposed_refined_microclimate_agentic");
+    if (s2 && s3) {
+      return `Baseline comparison: energy-only S2 reaches ${formatNumber(s2.annual_carbon_reduction_tco2__cluster_weighted_13_14_25 / 1000, 1)} ktCO2/yr but concentrates ${formatNumber(s2.largest_strategy_budget_share_pct, 1)}% of spending in one strategy. Proposed S3 reaches ${formatNumber(s3.annual_carbon_reduction_tco2__cluster_weighted_13_14_25 / 1000, 1)} ktCO2/yr while keeping the largest strategy budget share at ${formatNumber(s3.largest_strategy_budget_share_pct, 1)}%, which is why the Critic Agent treats it as more governable.`;
+    }
+  }
   if (state.selectedBuilding) {
     const b = state.selectedBuilding.properties;
     if (text.includes("building") || text.includes("建筑") || text.includes("confidence") || text.includes("语义")) {
@@ -1031,7 +1317,7 @@ function localAgentAnswer(message) {
     return `Grid ${selected.grid_id} was selected for ${strategyLabel(selected.strategy_id)} because the optimization found ${formatNumber(selected.annual_carbon_reduction_tco2, 1)} tCO2/yr annual reduction across ${formatNumber(selected.selected_buildings)} buildings while respecting the portfolio budget and strategy-share constraints. ${criticText(selected, null)}`;
   }
   if (text.includes("risk") || text.includes("critic") || text.includes("audit")) {
-    return criticText(selected, null);
+    return `Critic Agent audit: ${criticText(selected, null)} Data, Knowledge, Scenario and Optimization traces remain visible above so this is an auditable decision rather than a free-form recommendation.`;
   }
   if (text.includes("lcz") || text.includes("microclimate")) {
     return `This grid is ${selected.LCZ_label || "LCZ unavailable"} with max microclimate sensitivity of ${formatNumber(selected.max_microclimate_sensitivity_pct, 1)}%. The platform keeps this sensitivity in the evidence chain because the paper frames retrofit allocation as microclimate-aware prescription, not only energy ranking.`;

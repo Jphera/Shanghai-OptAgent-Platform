@@ -13,3 +13,4 @@ __pycache__/
 *.pyc
 mapbox_sources/
 mapbox_mbtiles/
+mapbox_studio_upload/

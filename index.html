@@ -103,6 +103,20 @@
         </div>
 
         <div class="panel-section" id="panel-chat">
+          <div class="agent-workbench">
+            <div class="section-title">Five-agent workbench</div>
+            <div id="agentCards" class="agent-card-grid"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Workflow run</div>
+            <div id="agentTrace" class="agent-trace"></div>
+            <div class="quick-prompt-grid">
+              <button type="button" data-agent-prompt="Explain the selected building and its decision-unit evidence.">Explain selection</button>
+              <button type="button" data-agent-prompt="Run a five-agent audit for the selected grid.">Run audit</button>
+              <button type="button" data-agent-prompt="Find microclimate-sensitive retrofit hotspots.">Find hotspots</button>
+              <button type="button" data-agent-prompt="Compare the proposed agentic portfolio against the energy-only baseline.">Compare baselines</button>
+            </div>
+          </div>
           <div class="control-block">
             <div class="section-title">Agent settings</div>
             <label for="apiKeyInput">API key</label>
