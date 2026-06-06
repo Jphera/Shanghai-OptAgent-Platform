@@ -49,10 +49,26 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          curl -L \
-            -X POST \
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/pages"
+          STATUS="$(curl -L -s -o /tmp/pages.json -w "%{http_code}" \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages" \
+            "${API}")"
+          if [ "${STATUS}" = "200" ]; then
+            METHOD="PUT"
+          else
+            METHOD="POST"
+          fi
+          curl --fail-with-body -L \
+            -X "${METHOD}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${API}" \
             -d '{"source":{"branch":"gh-pages","path":"/"},"build_type":"legacy"}'
+          curl --fail-with-body -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "${API}"
