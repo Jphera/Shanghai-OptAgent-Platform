@@ -158,4 +158,10 @@ After publishing the tileset, set `buildingTileset.enabled = true`, `sourceUrl`,
 
 ## Deployment
 
-The site is designed for GitHub Pages. Publish this repository and enable Pages from the default branch root.
+The site is designed for GitHub Pages. Pushes to `main` run `.github/workflows/pages.yml`, which publishes the static site to the `gh-pages` branch.
+
+Expected project URL:
+
+```text
+https://jphera.github.io/Shanghai-OptAgent-Platform/
+```
