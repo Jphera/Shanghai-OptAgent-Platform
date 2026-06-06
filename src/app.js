@@ -683,6 +683,7 @@ function agentStepObject(agentKey, tool, text, prompt = null, kind = "") {
 function renderAgentTrace(steps) {
   const container = document.getElementById("agentTrace");
   if (!container) return;
+  state.lastAgentSteps = steps;
   container.innerHTML = steps
     .map((step, index) => {
       const agent = AGENTS[step.agentKey];
@@ -701,6 +702,135 @@ function renderAgentTrace(steps) {
       `;
     })
     .join("");
+  renderAgentRunState(steps);
+}
+
+function renderAgentRunState(steps) {
+  const runState = document.getElementById("agentRunState");
+  const evidence = document.getElementById("agentEvidence");
+  const guardrails = document.getElementById("agentGuardrails");
+  if (!runState || !evidence || !guardrails) return;
+
+  const selected = state.selectedFeature ? state.selectedFeature.properties : null;
+  const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
+  const scenario = state.data
+    ? state.data.scenarioSummary.find((row) => row.scenario_id === state.scenarioId)
+    : null;
+  const prompt = steps.find((step) => step.prompt)?.prompt || "Portfolio inspection";
+  const guardrailRows = buildGuardrailRows(selected, building, scenario);
+  const riskCount = guardrailRows.filter((row) => row.kind === "risk").length;
+  const warnCount = guardrailRows.filter((row) => row.kind === "warn").length;
+  const runCards = [
+    ["Target", runTargetLabel(selected, building)],
+    ["Mode", localStorage.getItem(STORAGE.apiKey) ? "remote LLM + local trace" : "local deterministic trace"],
+    ["Handoff", steps.map((step) => AGENTS[step.agentKey].short).join(" -> ")],
+    ["Gate", riskCount ? `${riskCount} risk` : warnCount ? `${warnCount} watch` : "clear"]
+  ];
+
+  runState.innerHTML = runCards
+    .map(
+      ([label, value]) => `
+        <div class="agent-state-card">
+          <span>${label}</span>
+          <strong>${value}</strong>
+        </div>
+      `
+    )
+    .join("");
+
+  const evidenceRows = buildEvidenceRows(prompt, selected, building, scenario);
+  evidence.innerHTML = evidenceRows
+    .map(
+      (row) => `
+        <div class="lineage-item ${row.kind || ""}">
+          <span>${row.label}</span>
+          <strong>${row.value}</strong>
+        </div>
+      `
+    )
+    .join("");
+
+  guardrails.innerHTML = guardrailRows
+    .map(
+      (row) => `
+        <div class="guardrail-item ${row.kind}">
+          <span>${row.label}</span>
+          <strong>${row.value}</strong>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function runTargetLabel(selected, building) {
+  if (building) return `Building ${building.bldg_id || "n/a"}`;
+  if (selected) return `Grid ${selected.grid_id}`;
+  return "Shanghai portfolio";
+}
+
+function buildEvidenceRows(prompt, selected, building, scenario) {
+  const cfg = CONFIG.buildingTileset || {};
+  const examples = selected ? state.data.unitExamplesByGrid[String(selected.grid_id)] || [] : [];
+  const tileset = cfg.enabled ? `${String(cfg.sourceUrl || "").replace("mapbox://", "")}` : "disabled";
+  return [
+    {
+      label: "Prompt",
+      value: prompt.length > 48 ? `${prompt.slice(0, 48)}...` : prompt
+    },
+    {
+      label: "Building tileset",
+      value: cfg.enabled ? `${tileset} / ${cfg.sourceLayer || "source-layer n/a"}` : "not configured",
+      kind: cfg.enabled ? "" : "warn"
+    },
+    {
+      label: "Decision evidence",
+      value: selected ? `${examples.length} unit examples linked` : "scenario-level metrics",
+      kind: selected && !examples.length ? "warn" : ""
+    },
+    {
+      label: "Scenario",
+      value: scenario ? scenarioLabel(scenario.scenario_id) : "n/a"
+    },
+    {
+      label: "Building semantics",
+      value: building
+        ? `${building.coarse_function || "function n/a"} | ${building.thermal_template || "template n/a"}`
+        : "grid aggregation"
+    }
+  ];
+}
+
+function buildGuardrailRows(selected, building, scenario) {
+  const rows = [];
+  const budgetShare = Number(scenario && scenario.largest_strategy_budget_share_pct);
+  rows.push({
+    label: "Strategy budget cap",
+    value: Number.isFinite(budgetShare) ? `${formatNumber(budgetShare, 1)}% largest share` : "scenario n/a",
+    kind: Number.isFinite(budgetShare) && budgetShare > 35.1 ? "risk" : "pass"
+  });
+
+  const sensitivity = Number(selected && selected.max_microclimate_sensitivity_pct);
+  rows.push({
+    label: "Microclimate gate",
+    value: Number.isFinite(sensitivity) ? `${formatNumber(sensitivity, 1)}% max sensitivity` : "citywide screen",
+    kind: Number.isFinite(sensitivity) && sensitivity > 18 ? "risk" : Number.isFinite(sensitivity) && sensitivity > 10 ? "warn" : "pass"
+  });
+
+  const confidence = Number(building && building.llm_confidence);
+  rows.push({
+    label: "Semantic confidence",
+    value: Number.isFinite(confidence) ? `${formatNumber(confidence, 2)} LLM score` : "unit mean tracked",
+    kind: Number.isFinite(confidence) && confidence < 0.75 ? "risk" : "pass"
+  });
+
+  const examples = selected ? state.data.unitExamplesByGrid[String(selected.grid_id)] || [] : [];
+  rows.push({
+    label: "Evidence coverage",
+    value: selected ? `${examples.length} selected units` : "portfolio summary",
+    kind: selected && !examples.length ? "warn" : "pass"
+  });
+
+  return rows;
 }
 
 function highlightAgentHotspots(kind = "selected") {
@@ -1239,7 +1369,7 @@ async function callRemoteModel(message, apiKey, endpoint, model) {
         {
           role: "system",
           content:
-            "You are a Shanghai urban building decarbonization agent. Answer using the supplied research data only. Be concise, quantitative, and explicit about uncertainty."
+            "You are a Shanghai urban building decarbonization agent operating inside a five-agent workbench: Data, Knowledge, Scenario, Optimization, and Critic. Answer using the supplied research data, trace, evidence lineage, and guardrails only. Be concise, quantitative, and explicit about uncertainty."
         },
         { role: "user", content: `${context}\n\nUser question: ${message}` }
       ],
@@ -1260,13 +1390,23 @@ function buildContextPrompt() {
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
   const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
   const scenario = state.data.scenarioSummary.find((row) => row.scenario_id === state.scenarioId);
+  const trace = state.lastAgentSteps || buildAgentTrace("Current agent run");
   return JSON.stringify(
     {
       coreMetrics: metrics,
       activeScenario: scenario,
       selectedBuilding: building,
       selectedGrid: selected,
-      selectedUnits: selected ? state.data.unitExamplesByGrid[String(selected.grid_id)] || [] : []
+      selectedUnits: selected ? state.data.unitExamplesByGrid[String(selected.grid_id)] || [] : [],
+      agentTrace: trace.map((step) => ({
+        agent: step.agent,
+        tool: step.tool,
+        output: step.output,
+        text: step.text,
+        riskState: step.kind || "normal"
+      })),
+      guardrails: buildGuardrailRows(selected, building, scenario),
+      evidenceLineage: buildEvidenceRows("Current user question", selected, building, scenario)
     },
     null,
     2
