@@ -8,7 +8,7 @@ The platform visualizes the agentic retrofit optimization workflow:
 - RAG-grounded intervention constraints
 - NSGA-II/MILP portfolio optimization
 - critic-agent audit and explainability
-- optional LLM conversation through a user-provided API key
+- optional DeepSeek conversation through a secure proxy
 
 ## Local Preview
 
@@ -28,13 +28,25 @@ http://localhost:4173
 
 The app uses Mapbox GL JS for the basemap.
 
-No Mapbox token is committed because GitHub Push Protection treats Mapbox tokens as secrets. Use one of these runtime options:
+The site includes a Mapbox public browser token so the map can load without asking viewers to paste a token. Public `pk...` tokens are visible to browsers by design; restrict the token by URL in the Mapbox dashboard:
 
-- `window.SHANGHAI_OPTAGENT_CONFIG.mapboxAccessToken` in `src/config.js`
-- paste a public `pk...` token into the in-app Mapbox token prompt
-- append `?mapbox_token=YOUR_PUBLIC_TOKEN` to the URL
+```text
+https://jphera.github.io/Shanghai-OptAgent-Platform/*
+```
 
-Public Mapbox browser tokens are acceptable for static sites, but they should be restricted by URL in the Mapbox dashboard after deployment.
+If you rotate the token later, update `window.SHANGHAI_OPTAGENT_CONFIG.mapboxAccessToken` in `src/config.js`.
+
+## DeepSeek Agent Proxy
+
+Do not commit a DeepSeek `sk...` key to GitHub Pages. Static frontend code cannot keep server API keys private.
+
+Use `serverless/deepseek-worker.js` as a Cloudflare Worker template and set this secret in the Worker dashboard:
+
+```text
+DEEPSEEK_API_KEY=...
+```
+
+Then set `window.SHANGHAI_OPTAGENT_CONFIG.llm.proxyEndpoint` in `src/config.js` to the Worker URL. The frontend will call the proxy without exposing the DeepSeek key to viewers.
 
 ## Data
 
@@ -50,7 +62,12 @@ Regenerate from the research outputs:
 python scripts/build_platform_data.py
 ```
 
-The platform bundles the 1,369 selected NSGA-II 500 m allocation grids as the medium-zoom decision layer. The full 592,795-building footprint layer is not bundled into GitHub Pages; it is hosted as a Mapbox vector tileset and joined in the frontend through `src/config.js`.
+The platform bundles two 500 m grid layers:
+
+- a full-city opportunity layer covering 9,592 building-stock/candidate grids
+- scenario-specific NSGA-II selected allocation overlays, including 1,369 selected grids for S3
+
+The full 592,795-building footprint layer is not bundled into GitHub Pages; it is hosted as a Mapbox vector tileset and joined in the frontend through `src/config.js`. The frontend renders this layer as 3D `fill-extrusion` using the tileset `height_m` property.
 
 ## Current Mapbox Building Tileset
 

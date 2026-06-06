@@ -108,6 +108,7 @@ const state = {
   strategyFilter: "all",
   colorMetric: "strategy",
   popup: null,
+  selectedOpportunity: null,
   selectedBuilding: null
 };
 
@@ -153,7 +154,7 @@ function initMap() {
     style: CONFIG.styleUrl || "mapbox://styles/mapbox/light-v11",
     center: initial.center || [121.4737, 31.2304],
     zoom: initial.zoom || 9,
-    pitch: initial.pitch || 0,
+    pitch: initial.pitch ?? 42,
     bearing: initial.bearing || 0,
     attributionControl: true
   });
@@ -207,6 +208,12 @@ function addMapSourcesAndLayers() {
     generateId: true
   });
 
+  map.addSource("opportunity", {
+    type: "geojson",
+    data: state.data.opportunityGeojson,
+    generateId: true
+  });
+
   map.addLayer({
     id: "boundary-fill",
     type: "fill",
@@ -225,6 +232,57 @@ function addMapSourcesAndLayers() {
       "line-color": "#203039",
       "line-width": 1.2,
       "line-opacity": 0.72
+    }
+  });
+
+  map.addLayer({
+    id: "opportunity-fill",
+    type: "fill",
+    source: "opportunity",
+    paint: {
+      "fill-color": opportunityColorExpression(),
+      "fill-opacity": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        8,
+        0.32,
+        11,
+        0.20,
+        13,
+        0.10
+      ]
+    }
+  });
+
+  map.addLayer({
+    id: "opportunity-line",
+    type: "line",
+    source: "opportunity",
+    paint: {
+      "line-color": "#6c7a80",
+      "line-width": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        8,
+        0.15,
+        12,
+        0.35
+      ],
+      "line-opacity": 0.26
+    }
+  });
+
+  map.addLayer({
+    id: "opportunity-selected-line",
+    type: "line",
+    source: "opportunity",
+    filter: ["==", ["get", "grid_id"], -1],
+    paint: {
+      "line-color": "#172126",
+      "line-width": 2.8,
+      "line-opacity": 0.95
     }
   });
 
@@ -252,7 +310,7 @@ function addMapSourcesAndLayers() {
   map.addLayer({
     id: "agent-highlight-fill",
     type: "fill",
-    source: "allocation",
+    source: "opportunity",
     filter: ["in", ["get", "grid_id"], ["literal", []]],
     paint: {
       "fill-color": "#172126",
@@ -298,11 +356,31 @@ function addMapSourcesAndLayers() {
     selectFeature(feature, event.lngLat);
   });
 
+  map.on("click", "opportunity-fill", (event) => {
+    const feature = event.features && event.features[0];
+    if (!feature) return;
+    const gridId = Number(feature.properties.grid_id);
+    const selected = findCurrentAllocationFeature(gridId);
+    if (selected) {
+      selectFeature(selected, event.lngLat);
+    } else {
+      selectOpportunityFeature(feature, event.lngLat);
+    }
+  });
+
   map.on("mouseenter", "allocation-fill", () => {
     map.getCanvas().style.cursor = "pointer";
   });
 
   map.on("mouseleave", "allocation-fill", () => {
+    map.getCanvas().style.cursor = "";
+  });
+
+  map.on("mouseenter", "opportunity-fill", () => {
+    map.getCanvas().style.cursor = "pointer";
+  });
+
+  map.on("mouseleave", "opportunity-fill", () => {
     map.getCanvas().style.cursor = "";
   });
 
@@ -323,17 +401,27 @@ function addBuildingTilesetLayer() {
 
   map.addLayer({
     id: "building-fill",
-    type: "fill",
+    type: "fill-extrusion",
     source: "shanghai-buildings",
     "source-layer": cfg.sourceLayer,
     minzoom: cfg.minzoom || 12.5,
     paint: {
-      "fill-color": buildingFunctionColorExpression(),
-      "fill-opacity": [
+      "fill-extrusion-color": buildingFunctionColorExpression(),
+      "fill-extrusion-height": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        cfg.minzoom || 12.5,
+        0,
+        (cfg.minzoom || 12.5) + 0.8,
+        ["coalesce", ["to-number", ["get", "height_m"]], 8]
+      ],
+      "fill-extrusion-base": 0,
+      "fill-extrusion-opacity": [
         "case",
         ["boolean", ["feature-state", "hover"], false],
-        0.72,
-        0.48
+        0.88,
+        0.72
       ]
     }
   });
@@ -387,6 +475,36 @@ function buildingFunctionColorExpression() {
   return expression;
 }
 
+function opportunityColorExpression() {
+  const potential = [
+    "to-number",
+    [
+      "coalesce",
+      ["get", "recommended_annual_carbon_tco2"],
+      ["get", "candidate_potential_annual_carbon_tco2"],
+      0
+    ]
+  ];
+  return [
+    "case",
+    [">", potential, 0],
+    [
+      "interpolate",
+      ["linear"],
+      potential,
+      0,
+      "#f2f5f3",
+      300,
+      "#b8d6c5",
+      1200,
+      "#e7bf69",
+      4000,
+      "#b45a4d"
+    ],
+    "#d8e1e6"
+  ];
+}
+
 function configureBuildingToggle() {
   const checkbox = document.getElementById("toggleBuildings");
   const cfg = CONFIG.buildingTileset || {};
@@ -428,6 +546,39 @@ function maxMetric(metric) {
   return Math.max(
     ...state.data.allocationGeojson.features.map((feature) => Number(feature.properties[metric]) || 0)
   );
+}
+
+function currentAllocationGeojson() {
+  const byScenario = state.data.allocationGeojsonByScenario || {};
+  return byScenario[state.scenarioId] || state.data.allocationGeojson;
+}
+
+function findCurrentAllocationFeature(gridId) {
+  return currentAllocationGeojson().features.find((item) => Number(item.properties.grid_id) === Number(gridId));
+}
+
+function updateAllocationForScenario() {
+  const next = currentAllocationGeojson();
+  state.data.allocationGeojson = next;
+  state.selectedFeature = null;
+  state.selectedOpportunity = null;
+  state.selectedBuilding = null;
+  if (state.map && state.map.getSource("allocation")) {
+    state.map.getSource("allocation").setData(next);
+  }
+  if (state.map && state.map.getLayer("allocation-selected-line")) {
+    state.map.setFilter("allocation-selected-line", ["==", ["get", "grid_id"], -1]);
+  }
+  if (state.map && state.map.getLayer("opportunity-selected-line")) {
+    state.map.setFilter("opportunity-selected-line", ["==", ["get", "grid_id"], -1]);
+  }
+  renderStrategyFilter();
+  renderScenarioNarrative();
+  renderLegend();
+  renderEmptySelection();
+  renderAgentWorkbench();
+  renderAgentTrace(buildAgentTrace(`Switch to ${scenarioLabel(state.scenarioId)}.`));
+  applyMapFilters();
 }
 
 function applyMapFilters() {
@@ -472,6 +623,10 @@ function wireLayerControls() {
 
   document.getElementById("toggleBoundary").addEventListener("change", (event) => {
     setLayerVisibility(["boundary-fill", "boundary-line"], event.target.checked);
+  });
+
+  document.getElementById("toggleOpportunity").addEventListener("change", (event) => {
+    setLayerVisibility(["opportunity-fill", "opportunity-line", "opportunity-selected-line"], event.target.checked);
   });
 
   document.getElementById("toggleAllocation").addEventListener("change", (event) => {
@@ -527,18 +682,24 @@ function renderOverview() {
   scenarioSelect.value = state.scenarioId;
   scenarioSelect.addEventListener("change", (event) => {
     state.scenarioId = event.target.value;
-    renderScenarioNarrative();
+    updateAllocationForScenario();
   });
 
+  renderStrategyFilter();
+  renderScenarioNarrative();
+}
+
+function renderStrategyFilter() {
   const strategySelect = document.getElementById("strategyFilter");
   const strategies = unique(state.data.allocationGeojson.features.map((f) => f.properties.strategy_id));
+  const previous = state.strategyFilter;
   strategySelect.innerHTML =
     `<option value="all">All selected strategies</option>` +
     strategies
       .map((key) => `<option value="${key}">${(STRATEGIES[key] && STRATEGIES[key].label) || key}</option>`)
       .join("");
-
-  renderScenarioNarrative();
+  state.strategyFilter = strategies.includes(previous) ? previous : "all";
+  strategySelect.value = state.strategyFilter;
 }
 
 function renderScenarioNarrative() {
@@ -555,7 +716,7 @@ function renderScenarioNarrative() {
   document.getElementById("scenarioNarrative").innerHTML = `
     <p><strong>${scenarioLabel(row.scenario_id)}</strong> selects ${formatNumber(row.selected_units)} units and ${formatNumber(row.selected_buildings)} buildings under a ${formatCurrency(row.budget_rmb)} budget.</p>
     <p>Annual carbon reduction is ${formatNumber(row.annual_carbon_reduction_tco2__cluster_weighted_13_14_25, 1)} tCO2/yr, with the largest strategy budget share constrained to ${formatNumber(row.largest_strategy_budget_share_pct, 1)}%.</p>
-    <p>Dominant strategies: ${top || "not available"}.</p>
+    <p>Dominant strategies: ${top || "not available"}. The full opportunity layer covers ${formatNumber((state.data.opportunityGeojson || { features: [] }).features.length)} building-stock/candidate grids; this scenario selects ${formatNumber(state.data.allocationGeojson.features.length)} budget-constrained grids.</p>
   `;
 }
 
@@ -569,11 +730,12 @@ function renderAgentWorkbench() {
   const container = document.getElementById("agentCards");
   if (!container) return;
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
+  const opportunity = state.selectedOpportunity ? state.selectedOpportunity.properties : null;
   const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
 
   container.innerHTML = Object.entries(AGENTS)
     .map(([key, agent]) => {
-      const status = agentStatus(key, selected, building);
+      const status = agentStatus(key, selected || opportunity, building);
       return `
         <button class="agent-card ${state.activeAgent === key ? "active" : ""}" type="button" data-agent-key="${key}" style="--agent-color:${agent.color}">
           <span class="agent-card-top">
@@ -607,17 +769,19 @@ function agentStatus(key, selected, building) {
 
 function buildAgentTrace(prompt) {
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
+  const opportunity = state.selectedOpportunity ? state.selectedOpportunity.properties : null;
   const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
   const scenario = state.data
     ? state.data.scenarioSummary.find((row) => row.scenario_id === state.scenarioId)
     : null;
+  const gridContext = selected || opportunity;
 
   return [
-    buildDataAgentStep(prompt, selected, building),
-    buildKnowledgeAgentStep(selected, building),
-    buildScenarioAgentStep(selected, building),
+    buildDataAgentStep(prompt, gridContext, building),
+    buildKnowledgeAgentStep(gridContext, building),
+    buildScenarioAgentStep(gridContext, building),
     buildOptimizationAgentStep(selected, scenario),
-    buildCriticAgentStep(selected, building)
+    buildCriticAgentStep(gridContext, building)
   ];
 }
 
@@ -626,13 +790,14 @@ function buildDataAgentStep(prompt, selected, building) {
   const text = building
     ? `Selected building ${building.bldg_id} is ${building.coarse_function || "unknown function"}, ${building.age_bin || "unknown vintage"}, grid ${building.grid_id || "n/a"}.`
     : selected
-      ? `Selected grid ${selected.grid_id} contains ${formatNumber(selected.n_buildings || selected.selected_buildings)} buildings, LCZ ${selected.LCZ_mode || "n/a"}, and ${formatNumber(selected.floor_area_m2, 0)} m2 floor area proxy.`
+      ? `Grid ${selected.grid_id} contains ${formatNumber(selected.n_buildings || selected.selected_buildings)} buildings, LCZ ${selected.LCZ_mode || "n/a"}, and ${formatNumber(selected.floor_area_m2, 0)} m2 floor area proxy.`
       : `Shanghai stock contains ${formatNumber(metrics.building_count_in_units)} buildings compressed into ${formatNumber(metrics.optimization_units)} semantic decision units.`;
   return agentStepObject("data", "load_semantic_stock", text, prompt);
 }
 
 function buildKnowledgeAgentStep(selected, building) {
-  const strategy = selected ? strategyLabel(selected.strategy_id) : "formal intervention library";
+  const strategyId = selected && (selected.strategy_id || selected.recommended_strategy_id);
+  const strategy = strategyId ? strategyLabel(strategyId) : "formal intervention library";
   const text = selected
     ? `${strategy} is checked against function-vintage applicability and evidence-coded retrofit rules.`
     : `The library holds RAG-grounded retrofit families, costs, applicability and comfort-risk notes.`;
@@ -641,7 +806,9 @@ function buildKnowledgeAgentStep(selected, building) {
 
 function buildScenarioAgentStep(selected, building) {
   const text = selected
-    ? `${formatNumber(selected.candidate_units || selected.selected_units)} candidate units were screened in this grid; selected strategy is ${strategyLabel(selected.strategy_id)}.`
+    ? selected.strategy_id
+      ? `${formatNumber(selected.candidate_units || selected.selected_units)} candidate units were screened in this grid; selected strategy is ${strategyLabel(selected.strategy_id)}.`
+      : `${formatNumber(selected.candidate_units)} candidate units were screened in this grid; leading candidate is ${opportunityRecommendationLabel(selected)}.`
     : building
       ? `Building semantics can be promoted into a future what-if candidate through grid + function + vintage + template.`
       : `Candidate rows and feasibility matrix are available for scenario-level interrogation.`;
@@ -649,8 +816,10 @@ function buildScenarioAgentStep(selected, building) {
 }
 
 function buildOptimizationAgentStep(selected, scenario) {
-  const text = selected
+  const text = selected && selected.strategy_id
     ? `NSGA-II selected ${formatNumber(selected.selected_units)} units and ${formatNumber(selected.selected_buildings)} buildings here for ${formatNumber(selected.annual_carbon_reduction_tco2, 1)} tCO2/yr.`
+    : selected
+      ? `This grid remains in the full-city opportunity layer. It is available for candidate reasoning but is not part of the current budget-constrained NSGA-II selection.`
     : scenario
       ? `${scenarioLabel(scenario.scenario_id)} covers ${formatNumber(scenario.selected_buildings)} buildings and reduces ${formatNumber(scenario.annual_carbon_reduction_tco2__cluster_weighted_13_14_25, 1)} tCO2/yr.`
       : `Optimization portfolio is ready for NSGA-II/MILP comparison.`;
@@ -658,8 +827,10 @@ function buildOptimizationAgentStep(selected, scenario) {
 }
 
 function buildCriticAgentStep(selected, building) {
-  const text = selected
+  const text = selected && selected.strategy_id
     ? criticText(selected, null)
+    : selected
+      ? opportunityCriticText(selected)
     : building
       ? buildingCriticText(building, null)
       : `Standing audit checks budget, strategy concentration, missing evidence, comfort-risk and full-year-baseline anchoring.`;
@@ -707,25 +878,35 @@ function renderAgentTrace(steps) {
 
 function renderAgentRunState(steps) {
   const runState = document.getElementById("agentRunState");
+  const compact = document.getElementById("agentCompactStatus");
   const evidence = document.getElementById("agentEvidence");
   const guardrails = document.getElementById("agentGuardrails");
   if (!runState || !evidence || !guardrails) return;
 
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
+  const opportunity = state.selectedOpportunity ? state.selectedOpportunity.properties : null;
   const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
   const scenario = state.data
     ? state.data.scenarioSummary.find((row) => row.scenario_id === state.scenarioId)
     : null;
   const prompt = steps.find((step) => step.prompt)?.prompt || "Portfolio inspection";
-  const guardrailRows = buildGuardrailRows(selected, building, scenario);
+  const gridContext = selected || opportunity;
+  const guardrailRows = buildGuardrailRows(gridContext, building, scenario);
   const riskCount = guardrailRows.filter((row) => row.kind === "risk").length;
   const warnCount = guardrailRows.filter((row) => row.kind === "warn").length;
   const runCards = [
-    ["Target", runTargetLabel(selected, building)],
+    ["Target", runTargetLabel(gridContext, building)],
     ["Mode", localStorage.getItem(STORAGE.apiKey) ? "remote LLM + local trace" : "local deterministic trace"],
     ["Handoff", steps.map((step) => AGENTS[step.agentKey].short).join(" -> ")],
     ["Gate", riskCount ? `${riskCount} risk` : warnCount ? `${warnCount} watch` : "clear"]
   ];
+
+  if (compact) {
+    compact.innerHTML = `
+      <strong>${runTargetLabel(gridContext, building)}</strong>
+      <span>Five-agent route: Data -> Knowledge -> Scenario -> Optimization -> Critic. ${riskCount ? `${riskCount} risk flag requires review.` : warnCount ? `${warnCount} watch item is active.` : "No major guardrail risk in the current context."}</span>
+    `;
+  }
 
   runState.innerHTML = runCards
     .map(
@@ -738,7 +919,7 @@ function renderAgentRunState(steps) {
     )
     .join("");
 
-  const evidenceRows = buildEvidenceRows(prompt, selected, building, scenario);
+  const evidenceRows = buildEvidenceRows(prompt, gridContext, building, scenario);
   evidence.innerHTML = evidenceRows
     .map(
       (row) => `
@@ -764,6 +945,7 @@ function renderAgentRunState(steps) {
 
 function runTargetLabel(selected, building) {
   if (building) return `Building ${building.bldg_id || "n/a"}`;
+  if (selected && !selected.strategy_id && selected.opportunity_status) return `Opportunity grid ${selected.grid_id}`;
   if (selected) return `Grid ${selected.grid_id}`;
   return "Shanghai portfolio";
 }
@@ -784,8 +966,12 @@ function buildEvidenceRows(prompt, selected, building, scenario) {
     },
     {
       label: "Decision evidence",
-      value: selected ? `${examples.length} unit examples linked` : "scenario-level metrics",
-      kind: selected && !examples.length ? "warn" : ""
+      value: selected && selected.strategy_id
+        ? `${examples.length} unit examples linked`
+        : selected
+          ? `${formatNumber(selected.candidate_units)} candidate units screened`
+          : "scenario-level metrics",
+      kind: selected && selected.strategy_id && !examples.length ? "warn" : ""
     },
     {
       label: "Scenario",
@@ -795,7 +981,9 @@ function buildEvidenceRows(prompt, selected, building, scenario) {
       label: "Building semantics",
       value: building
         ? `${building.coarse_function || "function n/a"} | ${building.thermal_template || "template n/a"}`
-        : "grid aggregation"
+        : selected && !selected.strategy_id
+          ? opportunityRecommendationLabel(selected)
+          : "grid aggregation"
     }
   ];
 }
@@ -818,16 +1006,24 @@ function buildGuardrailRows(selected, building, scenario) {
 
   const confidence = Number(building && building.llm_confidence);
   rows.push({
-    label: "Semantic confidence",
-    value: Number.isFinite(confidence) ? `${formatNumber(confidence, 2)} LLM score` : "unit mean tracked",
+    label: building ? "Semantic confidence" : selected && !selected.strategy_id ? "Recommended candidate" : "Semantic confidence",
+    value: Number.isFinite(confidence)
+      ? `${formatNumber(confidence, 2)} LLM score`
+      : selected && !selected.strategy_id
+        ? opportunityRecommendationLabel(selected)
+        : "unit mean tracked",
     kind: Number.isFinite(confidence) && confidence < 0.75 ? "risk" : "pass"
   });
 
-  const examples = selected ? state.data.unitExamplesByGrid[String(selected.grid_id)] || [] : [];
+  const examples = selected && selected.strategy_id ? state.data.unitExamplesByGrid[String(selected.grid_id)] || [] : [];
   rows.push({
     label: "Evidence coverage",
-    value: selected ? `${examples.length} selected units` : "portfolio summary",
-    kind: selected && !examples.length ? "warn" : "pass"
+    value: selected && selected.strategy_id
+      ? `${examples.length} selected units`
+      : selected
+        ? `${formatNumber(selected.candidate_units)} candidate units`
+        : "portfolio summary",
+    kind: selected && selected.strategy_id && !examples.length ? "warn" : "pass"
   });
 
   return rows;
@@ -837,40 +1033,67 @@ function highlightAgentHotspots(kind = "selected") {
   if (!state.map || !state.map.getLayer("agent-highlight-fill")) return;
   let ids = [];
   if (kind === "hotspots") {
-    ids = state.data.allocationGeojson.features
+    ids = (state.data.opportunityGeojson || state.data.allocationGeojson).features
       .slice()
       .sort(
         (a, b) =>
-          Number(b.properties.max_microclimate_sensitivity_pct || 0) -
-          Number(a.properties.max_microclimate_sensitivity_pct || 0)
+          Number(b.properties.candidate_potential_annual_carbon_tco2 || 0) -
+          Number(a.properties.candidate_potential_annual_carbon_tco2 || 0)
       )
       .slice(0, 35)
       .map((feature) => Number(feature.properties.grid_id));
   } else if (state.selectedFeature) {
     ids = [Number(state.selectedFeature.properties.grid_id)];
+  } else if (state.selectedOpportunity) {
+    ids = [Number(state.selectedOpportunity.properties.grid_id)];
   }
   state.map.setFilter("agent-highlight-fill", ["in", ["get", "grid_id"], ["literal", ids]]);
 }
 
 function renderModelBenchmark() {
-  const grouped = {};
-  state.data.modelBenchmark.forEach((row) => {
-    grouped[row.model_spec] = grouped[row.model_spec] || [];
-    grouped[row.model_spec].push(row);
-  });
+  const rows = state.data.modelBenchmark || [];
+  const overall = rows
+    .filter((row) => row.task_group === "OVERALL")
+    .sort((a, b) => Number(b.mean_score || 0) - Number(a.mean_score || 0));
 
-  document.getElementById("modelBenchmark").innerHTML = Object.entries(grouped)
-    .map(([model, rows]) => {
-      const mean = rows.reduce((sum, row) => sum + Number(row.mean_score || 0), 0) / rows.length;
-      const latency = rows.reduce((sum, row) => sum + Number(row.mean_elapsed_sec || 0), 0) / rows.length;
+  document.getElementById("modelBenchmark").innerHTML = overall
+    .map((row, index) => {
+      const model = modelShortLabel(row.model_spec);
       return `
-        <div class="list-item">
-          <strong>${model}</strong>
-          <span>Mean task score ${formatNumber(mean, 3)} across ${rows.length} task groups; mean latency ${formatNumber(latency, 2)} s/case.</span>
-        </div>
+        <button class="list-item benchmark-card" type="button" data-model-spec="${row.model_spec}">
+          <strong>${index + 1}. ${model}</strong>
+          <span>Overall score ${formatNumber(row.mean_score, 3)} | JSON validity ${formatNumber(row.parse_valid_rate * 100, 0)}% | ${formatNumber(row.mean_elapsed_sec, 2)} s/case</span>
+        </button>
       `;
     })
     .join("");
+
+  document.querySelectorAll("[data-model-spec]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const spec = button.dataset.modelSpec;
+      const message = `Explain benchmark performance for ${spec}`;
+      addChatMessage("user", message);
+      addChatMessage("assistant", summarizeModel(spec));
+      state.activePanel = "chat";
+      document.querySelector('[data-panel-target="chat"]').click();
+    });
+  });
+}
+
+function modelShortLabel(spec) {
+  const labels = {
+    "deepseek:deepseek-chat": "DeepSeek-V3",
+    "dashscope:qwen-plus-latest": "Qwen-Plus",
+    "openai:gpt-4.1-mini": "GPT-4.1 mini",
+    "openai:gpt-5.3-chat-latest": "GPT-5.3 Chat",
+    "openai:gpt-5.5": "GPT-5.5",
+    "openai:gpt-5.5@high": "GPT-5.5 high",
+    "anthropic:claude-haiku-4-5-20251001": "Claude Haiku 4.5",
+    "anthropic:claude-sonnet-4-5-20250929": "Claude Sonnet 4.5",
+    "anthropic:claude-opus-4-7": "Claude Opus 4.7",
+    "gemini:gemini-3.1-flash-lite": "Gemini 3.1 Flash-Lite"
+  };
+  return labels[spec] || spec;
 }
 
 function renderBudgetChart() {
@@ -945,15 +1168,20 @@ function renderLegend() {
 
 function selectFeature(feature, lngLat) {
   state.selectedBuilding = null;
+  state.selectedOpportunity = null;
   state.selectedFeature = feature;
   const p = feature.properties;
 
+  clearBuildingSelection();
   if (state.map && state.map.getLayer("allocation-selected-line")) {
     state.map.setFilter("allocation-selected-line", [
       "all",
       ["==", ["get", "grid_id"], p.grid_id],
       ["==", ["get", "strategy_id"], p.strategy_id]
     ]);
+  }
+  if (state.map && state.map.getLayer("opportunity-selected-line")) {
+    state.map.setFilter("opportunity-selected-line", ["==", ["get", "grid_id"], -1]);
   }
 
   if (state.popup) state.popup.remove();
@@ -974,12 +1202,54 @@ function selectFeature(feature, lngLat) {
   highlightAgentHotspots("selected");
 }
 
+function selectOpportunityFeature(feature, lngLat) {
+  state.selectedBuilding = null;
+  state.selectedFeature = null;
+  state.selectedOpportunity = feature;
+  const p = feature.properties;
+  const gridId = Number(p.grid_id);
+
+  clearBuildingSelection();
+  if (state.map && state.map.getLayer("allocation-selected-line")) {
+    state.map.setFilter("allocation-selected-line", [
+      "==",
+      ["get", "grid_id"],
+      Number.isFinite(gridId) ? gridId : -1
+    ]);
+  }
+  if (state.map && state.map.getLayer("opportunity-selected-line")) {
+    state.map.setFilter("opportunity-selected-line", [
+      "==",
+      ["get", "grid_id"],
+      Number.isFinite(gridId) ? gridId : -1
+    ]);
+  }
+
+  if (state.popup) state.popup.remove();
+  if (state.map && lngLat) {
+    state.popup = new mapboxgl.Popup({ closeButton: false, maxWidth: "300px" })
+      .setLngLat(lngLat)
+      .setHTML(`
+        <div class="popup-title">Opportunity grid ${p.grid_id}</div>
+        <div class="popup-line">${p.opportunity_status || "building stock"} | ${formatNumber(p.n_buildings)} buildings</div>
+        <div class="popup-line">${opportunityRecommendationText(p)}</div>
+      `)
+      .addTo(state.map);
+  }
+
+  renderSelectedOpportunity();
+  renderAgentWorkbench();
+  renderAgentTrace(buildAgentTrace(`Inspect full-city opportunity grid ${p.grid_id}.`));
+  highlightAgentHotspots("selected");
+}
+
 function selectBuildingFeature(feature, lngLat) {
   const normalizedFeature = {
     ...feature,
     properties: normalizeBuildingProperties(feature.properties || {})
   };
   state.selectedBuilding = normalizedFeature;
+  state.selectedOpportunity = null;
   const p = normalizedFeature.properties;
   const gridId = Number(p.grid_id);
   const gridFeature = state.data.allocationGeojson.features.find(
@@ -1020,6 +1290,16 @@ function selectBuildingFeature(feature, lngLat) {
   highlightAgentHotspots("selected");
 }
 
+function clearBuildingSelection() {
+  if (state.map && state.map.getLayer("building-selected-line")) {
+    state.map.setFilter("building-selected-line", [
+      "any",
+      ["==", ["get", "bldg_id"], -1],
+      ["==", ["get", "objectid"], -1]
+    ]);
+  }
+}
+
 function normalizeBuildingProperties(raw) {
   return {
     ...raw,
@@ -1039,7 +1319,7 @@ function normalizeBuildingProperties(raw) {
 
 function renderEmptySelection() {
   document.getElementById("selectedSummary").innerHTML = `
-    <p class="narrative">Click a selected 500 m allocation grid on the map. The critic agent panel will explain the selected strategy, expected carbon impact, feasibility trace, and representative decision units.</p>
+    <p class="narrative">Click a selected allocation grid, a full-city opportunity grid, or a 3D building. The critic agent panel will switch between selected portfolio evidence, candidate-grid recommendation, and building-level semantic evidence.</p>
   `;
   document.getElementById("agentSteps").innerHTML = "";
   document.getElementById("unitExamples").innerHTML = "";
@@ -1061,6 +1341,71 @@ function renderSelected() {
 
   renderAgentSteps(p);
   renderUnitExamples(p.grid_id);
+}
+
+function renderSelectedOpportunity() {
+  const p = state.selectedOpportunity.properties;
+  const recommendation = opportunityRecommendationLabel(p);
+  const recommendationText = opportunityRecommendationText(p);
+  document.getElementById("selectedTitle").textContent = `Opportunity grid ${p.grid_id}`;
+  document.getElementById("selectedSummary").innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-tile"><strong>${formatNumber(p.n_buildings)}</strong><span>stock buildings</span></div>
+      <div class="summary-tile"><strong>${formatNumber(p.candidate_units)}</strong><span>candidate units</span></div>
+      <div class="summary-tile"><strong>${formatNumber(p.candidate_potential_annual_carbon_tco2, 1)}</strong><span>candidate tCO2/yr</span></div>
+      <div class="summary-tile"><strong>${recommendation}</strong><span>recommended candidate</span></div>
+      <div class="summary-tile"><strong>${formatNumber(p.recommended_annual_carbon_tco2, 1)}</strong><span>recommended tCO2/yr</span></div>
+      <div class="summary-tile"><strong>${formatCurrency(p.recommended_rmb_per_tco2)}</strong><span>RMB per tCO2/yr</span></div>
+      <div class="summary-tile"><strong>${p.opportunity_status || "building stock"}</strong><span>portfolio status</span></div>
+    </div>
+  `;
+
+  document.getElementById("agentSteps").innerHTML = `
+    <div class="agent-step">
+      <h3>Data Agent: citywide stock context</h3>
+      <p>This 500 m grid is part of the full-city building-stock layer, not only the sparse NSGA-II selected portfolio.</p>
+    </div>
+    <div class="agent-step">
+      <h3>Scenario Agent: candidate recommendation</h3>
+      <p>${recommendationText}. The full candidate supply in this grid is ${formatNumber(p.candidate_potential_annual_carbon_tco2, 1)} tCO2/yr before portfolio selection.</p>
+    </div>
+    <div class="agent-step warning">
+      <h3>Critic Agent: why not selected</h3>
+      <p>The selected allocation is budget constrained. A grid can have buildings or candidate potential and still be outside the current scenario if other units dominate under cost, carbon, coverage, microclimate and strategy-share constraints.</p>
+    </div>
+  `;
+  document.getElementById("unitExamples").innerHTML = `
+    <div class="section-title">Full-city interpretation</div>
+    <div class="unit-card">
+      <p>Use this layer to discuss citywide opportunity coverage. Use the selected allocation overlay to discuss what the NSGA-II portfolio actually chooses under the current scenario.</p>
+      <div class="tag-row">
+        <span class="tag">Grid ${p.grid_id}</span>
+        <span class="tag">${p.opportunity_status || "building stock"}</span>
+        <span class="tag">${recommendation}</span>
+        <span class="tag">${formatNumber(p.n_buildings)} buildings</span>
+      </div>
+    </div>
+  `;
+}
+
+function opportunityRecommendationLabel(p) {
+  if (p.strategy_id) return strategyLabel(p.strategy_id);
+  if (p.recommended_strategy_id) return strategyLabel(p.recommended_strategy_id);
+  if (p.recommended_strategy_name) return p.recommended_strategy_name;
+  return "No feasible candidate";
+}
+
+function opportunityRecommendationText(p) {
+  const label = opportunityRecommendationLabel(p);
+  const carbon = Number(p.recommended_annual_carbon_tco2);
+  if (Number.isFinite(carbon) && carbon > 0) {
+    return `${label}: ${formatNumber(carbon, 1)} tCO2/yr at ${formatCurrency(p.recommended_rmb_per_tco2)} per tCO2/yr`;
+  }
+  const potential = Number(p.candidate_potential_annual_carbon_tco2);
+  if (Number.isFinite(potential) && potential > 0) {
+    return `${label}: ${formatNumber(potential, 1)} tCO2/yr candidate potential`;
+  }
+  return "No feasible retrofit candidate is loaded for this grid";
 }
 
 function renderSelectedBuilding() {
@@ -1185,6 +1530,21 @@ function criticText(p, capture) {
   return parts.join(" ");
 }
 
+function opportunityCriticText(p) {
+  const parts = [];
+  const potential = Number(p.candidate_potential_annual_carbon_tco2);
+  const recommended = Number(p.recommended_annual_carbon_tco2);
+  if (Number.isFinite(recommended) && recommended > 0) {
+    parts.push(`Best loaded candidate is ${opportunityRecommendationText(p)}.`);
+  } else if (Number.isFinite(potential) && potential > 0) {
+    parts.push(`The grid has ${formatNumber(potential, 1)} tCO2/yr candidate potential, but no single recommended strategy was resolved in the compact platform extract.`);
+  } else {
+    parts.push("The grid is retained for citywide building-stock context, but it has no feasible candidate potential in the loaded S3 candidate table.");
+  }
+  parts.push("It can still be outside the selected scenario because the optimization chooses a budget-limited subset across all candidate units.");
+  return parts.join(" ");
+}
+
 function renderUnitExamples(gridId) {
   const examples = state.data.unitExamplesByGrid[String(gridId)] || [];
   const container = document.getElementById("unitExamples");
@@ -1226,7 +1586,7 @@ function runGridSearch() {
 
 function fitAllocation() {
   if (!state.map || !state.data) return;
-  const bounds = featureCollectionBounds(state.data.allocationGeojson);
+  const bounds = featureCollectionBounds(state.data.opportunityGeojson || state.data.allocationGeojson);
   if (bounds) state.map.fitBounds(bounds, { padding: 48, duration: 700 });
 }
 
@@ -1322,7 +1682,7 @@ function wireChat() {
   });
   addChatMessage(
     "assistant",
-    "Select a grid and ask about retrofit priority, constraints, budget sensitivity, semantic confidence, or model benchmark. Without an API key I use a deterministic local agent over the loaded research data."
+    "Select a building, opportunity grid, or selected allocation grid, then ask about retrofit priority, constraints, budget sensitivity, semantic confidence, or the 10-model benchmark. If no secure proxy is configured, I use a deterministic local agent over the loaded research data."
   );
 }
 
@@ -1342,9 +1702,17 @@ function saveApiSettings() {
 }
 
 async function answerQuestion(message) {
+  const proxyEndpoint = CONFIG.llm && CONFIG.llm.proxyEndpoint;
+  const model = localStorage.getItem(STORAGE.apiModel) || (CONFIG.llm && CONFIG.llm.model);
+  if (proxyEndpoint && model) {
+    try {
+      return await callAgentProxy(message, proxyEndpoint, model);
+    } catch (error) {
+      return `The secure agent proxy failed, so I fell back to the local agent. ${localAgentAnswer(message)}`;
+    }
+  }
   const apiKey = localStorage.getItem(STORAGE.apiKey);
   const endpoint = localStorage.getItem(STORAGE.apiEndpoint);
-  const model = localStorage.getItem(STORAGE.apiModel);
   if (apiKey && endpoint && model) {
     try {
       return await callRemoteModel(message, apiKey, endpoint, model);
@@ -1353,6 +1721,23 @@ async function answerQuestion(message) {
     }
   }
   return localAgentAnswer(message);
+}
+
+async function callAgentProxy(message, endpoint, model) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      message,
+      context: buildContextPrompt()
+    })
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const json = await response.json();
+  return json.answer || json.content || json.message || "The agent proxy returned no readable answer.";
 }
 
 async function callRemoteModel(message, apiKey, endpoint, model) {
@@ -1388,6 +1773,7 @@ async function callRemoteModel(message, apiKey, endpoint, model) {
 function buildContextPrompt() {
   const metrics = state.data.coreMetrics;
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
+  const opportunity = state.selectedOpportunity ? state.selectedOpportunity.properties : null;
   const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
   const scenario = state.data.scenarioSummary.find((row) => row.scenario_id === state.scenarioId);
   const trace = state.lastAgentSteps || buildAgentTrace("Current agent run");
@@ -1397,6 +1783,7 @@ function buildContextPrompt() {
       activeScenario: scenario,
       selectedBuilding: building,
       selectedGrid: selected,
+      selectedOpportunityGrid: opportunity,
       selectedUnits: selected ? state.data.unitExamplesByGrid[String(selected.grid_id)] || [] : [],
       agentTrace: trace.map((step) => ({
         agent: step.agent,
@@ -1415,7 +1802,17 @@ function buildContextPrompt() {
 
 function localAgentAnswer(message) {
   const text = message.toLowerCase();
-  if (text.includes("hotspot") || text.includes("热点")) {
+  const raw = message;
+  const asksHotspot = hasAny(text, raw, ["hotspot", "\u70ed\u70b9"]);
+  const asksCompare = hasAny(text, raw, ["compare", "baseline", "\u5bf9\u6bd4", "\u57fa\u7ebf"]);
+  const asksBuilding = hasAny(text, raw, ["building", "confidence", "\u5efa\u7b51", "\u7f6e\u4fe1", "\u8bed\u4e49"]);
+  const asksWhy = hasAny(text, raw, ["why", "select", "not selected", "\u4e3a\u4ec0\u4e48", "\u4e3a\u4f55", "\u6ca1\u9009", "\u9009\u62e9", "\u5165\u9009"]);
+  const asksRisk = hasAny(text, raw, ["risk", "critic", "audit", "\u98ce\u9669", "\u5ba1\u6838"]);
+  const asksMicroclimate = hasAny(text, raw, ["lcz", "microclimate", "\u5fae\u6c14\u5019"]);
+  const asksBudget = hasAny(text, raw, ["budget", "\u9884\u7b97"]);
+  const asksBenchmark = hasAny(text, raw, ["model", "benchmark", "\u6a21\u578b", "\u6d4b\u8bc4"]);
+
+  if (asksHotspot) {
     const top = state.data.allocationGeojson.features
       .slice()
       .sort(
@@ -1431,46 +1828,61 @@ function localAgentAnswer(message) {
       .join("; ");
     return `Five-agent run complete. Data Agent ranked microclimate sensitivity, Scenario Agent preserved feasible strategies, Optimization Agent kept the selected portfolio, and Critic Agent highlighted the top grids on the map. Top hotspots: ${top}.`;
   }
-  if (text.includes("compare") || text.includes("baseline") || text.includes("对比")) {
+
+  if (asksCompare) {
     const s2 = state.data.scenarioSummary.find((row) => row.scenario_id === "S2_refined_attributes_microclimate_energy_only");
     const s3 = state.data.scenarioSummary.find((row) => row.scenario_id === "S3_proposed_refined_microclimate_agentic");
     if (s2 && s3) {
       return `Baseline comparison: energy-only S2 reaches ${formatNumber(s2.annual_carbon_reduction_tco2__cluster_weighted_13_14_25 / 1000, 1)} ktCO2/yr but concentrates ${formatNumber(s2.largest_strategy_budget_share_pct, 1)}% of spending in one strategy. Proposed S3 reaches ${formatNumber(s3.annual_carbon_reduction_tco2__cluster_weighted_13_14_25 / 1000, 1)} ktCO2/yr while keeping the largest strategy budget share at ${formatNumber(s3.largest_strategy_budget_share_pct, 1)}%, which is why the Critic Agent treats it as more governable.`;
     }
   }
+
   if (state.selectedBuilding) {
     const b = state.selectedBuilding.properties;
-    if (text.includes("building") || text.includes("建筑") || text.includes("confidence") || text.includes("语义")) {
+    if (asksBuilding) {
       return `Building ${b.bldg_id || "unknown"} is classified as ${b.coarse_function || "unknown"} / ${b.fine_function || "unknown"}, age bin ${b.age_bin || "unknown"}, template ${b.thermal_template || "unknown"}, with LLM confidence ${formatNumber(b.llm_confidence, 2)}. ${buildingCriticText(b, state.selectedFeature && state.selectedFeature.properties)}`;
     }
   }
+
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
+  const opportunity = state.selectedOpportunity ? state.selectedOpportunity.properties : null;
+
+  if (opportunity && asksWhy) {
+    return `Grid ${opportunity.grid_id} is in the full-city opportunity layer with ${formatNumber(opportunity.n_buildings)} buildings. ${opportunityRecommendationText(opportunity)}. It is not selected in ${scenarioLabel(state.scenarioId)} because the NSGA-II portfolio is budget-constrained: it ranks unit-strategy options across the city by carbon, cost, coverage, microclimate evidence and strategy-share guardrails, then selects only the best feasible subset.`;
+  }
+
+  if (opportunity) {
+    return `Opportunity grid ${opportunity.grid_id}: ${formatNumber(opportunity.n_buildings)} buildings, baseline EUI ${formatNumber(opportunity.baseline_eui_kwh_m2, 1)} kWh/m2, ${formatNumber(opportunity.candidate_units)} feasible candidate units and ${formatNumber(opportunity.candidate_potential_annual_carbon_tco2, 1)} tCO2/yr candidate potential. ${opportunityRecommendationText(opportunity)}. The selected allocation overlay shows whether the current scenario actually spends budget here.`;
+  }
 
   if (!selected) {
-    if (text.includes("model") || text.includes("benchmark")) {
+    if (asksBenchmark) {
       return summarizeModels();
     }
     return "Please select a grid first. I can then explain why the strategy was selected, what the critic agent checks, and how the grid compares with the 1B RMB portfolio.";
   }
 
-  if (text.includes("why") || text.includes("strategy") || text.includes("select")) {
+  if (asksWhy || text.includes("strategy")) {
     return `Grid ${selected.grid_id} was selected for ${strategyLabel(selected.strategy_id)} because the optimization found ${formatNumber(selected.annual_carbon_reduction_tco2, 1)} tCO2/yr annual reduction across ${formatNumber(selected.selected_buildings)} buildings while respecting the portfolio budget and strategy-share constraints. ${criticText(selected, null)}`;
   }
-  if (text.includes("risk") || text.includes("critic") || text.includes("audit")) {
+  if (asksRisk) {
     return `Critic Agent audit: ${criticText(selected, null)} Data, Knowledge, Scenario and Optimization traces remain visible above so this is an auditable decision rather than a free-form recommendation.`;
   }
-  if (text.includes("lcz") || text.includes("microclimate")) {
+  if (asksMicroclimate) {
     return `This grid is ${selected.LCZ_label || "LCZ unavailable"} with max microclimate sensitivity of ${formatNumber(selected.max_microclimate_sensitivity_pct, 1)}%. The platform keeps this sensitivity in the evidence chain because the paper frames retrofit allocation as microclimate-aware prescription, not only energy ranking.`;
   }
-  if (text.includes("budget")) {
+  if (asksBudget) {
     return summarizeBudget();
   }
-  if (text.includes("model") || text.includes("benchmark")) {
+  if (asksBenchmark) {
     return summarizeModels();
   }
   return `For grid ${selected.grid_id}, the selected strategy is ${strategyLabel(selected.strategy_id)}, covering ${formatNumber(selected.selected_buildings)} buildings and reducing ${formatNumber(selected.annual_carbon_reduction_tco2, 1)} tCO2/yr. The critic focus is: ${criticText(selected, null)}`;
 }
 
+function hasAny(text, raw, terms) {
+  return terms.some((term) => text.includes(term) || raw.includes(term));
+}
 function summarizeBudget() {
   const rows = state.data.budgetSensitivity || [];
   if (!rows.length) return "Budget sensitivity data are not loaded.";
@@ -1480,15 +1892,35 @@ function summarizeBudget() {
 
 function summarizeModels() {
   const rows = state.data.modelBenchmark || [];
-  const byModel = {};
-  rows.forEach((row) => {
-    byModel[row.model_spec] = byModel[row.model_spec] || [];
-    byModel[row.model_spec].push(Number(row.mean_score || 0));
-  });
-  const summary = Object.entries(byModel)
-    .map(([model, scores]) => `${model}: ${formatNumber(scores.reduce((a, b) => a + b, 0) / scores.length, 3)}`)
+  const overall = rows.filter((row) => row.task_group === "OVERALL").sort((a, b) => Number(b.mean_score || 0) - Number(a.mean_score || 0));
+  if (!overall.length) return "Model benchmark data are not loaded.";
+  const summary = overall
+    .slice(0, 4)
+    .map((row) => `${modelShortLabel(row.model_spec)}: ${formatNumber(row.mean_score, 3)} score, ${formatNumber(row.mean_elapsed_sec, 2)} s`)
     .join("; ");
-  return `Agent benchmark mean scores by model: ${summary}. These scores evaluate workflow tasks such as semantic unit construction, RAG constraint extraction, tool planning, and critic audit, not EnergyPlus physics.`;
+  return `Agent benchmark top models: ${summary}. These scores evaluate semantic unit construction, RAG constraint extraction, tool planning and critic audit with strict JSON validity, not EnergyPlus physics.`;
+}
+
+function summarizeModel(spec) {
+  const rows = (state.data.modelBenchmark || []).filter((row) => row.model_spec === spec);
+  if (!rows.length) return `No benchmark rows are loaded for ${spec}.`;
+  const overall = rows.find((row) => row.task_group === "OVERALL");
+  const tasks = rows
+    .filter((row) => row.task_group !== "OVERALL")
+    .sort((a, b) => Number(b.mean_score || 0) - Number(a.mean_score || 0))
+    .map((row) => `${taskShortLabel(row.task_group)} ${formatNumber(row.mean_score, 2)}`)
+    .join(", ");
+  return `${modelShortLabel(spec)} benchmark: overall score ${formatNumber(overall && overall.mean_score, 3)}, valid-response rate ${formatNumber(((overall && overall.parse_valid_rate) || 0) * 100, 0)}%, mean latency ${formatNumber(overall && overall.mean_elapsed_sec, 2)} s/case. Task profile: ${tasks}. This is the paper's 10-model agent evaluation layer, not a generic leaderboard.`;
+}
+
+function taskShortLabel(task) {
+  const labels = {
+    T1_semantic_unit_construction: "Semantic unit",
+    T2_rag_constraint_extraction: "RAG",
+    T3_tool_planning: "Tool planning",
+    T4_critic_audit: "Critic"
+  };
+  return labels[task] || task;
 }
 
 function addChatMessage(role, text) {
@@ -1543,3 +1975,4 @@ function formatBudgetShort(value) {
   if (!Number.isFinite(number)) return "n/a";
   return `${formatNumber(number / 1e8, 1)}e8`;
 }
+

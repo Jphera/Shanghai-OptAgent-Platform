@@ -12,6 +12,7 @@ SPATIAL = RESULTS / "intervention_and_spatial_analysis"
 BENCHMARK = RESULTS / "agent_model_benchmark"
 FULL_YEAR = RESULTS / "full_year_validation"
 OUT = Path(__file__).resolve().parents[1] / "data" / "shanghai-platform-data.json"
+DEFAULT_SCENARIO_ID = "S3_proposed_refined_microclimate_agentic"
 
 
 def finite(value):
@@ -48,17 +49,33 @@ def normalize_feature_properties(feature):
     return feature
 
 
-def build_allocation_geojson():
-    gpkg = SPATIAL / "shanghai_nsga2_best_grid_allocation_polygons.gpkg"
-    csv = SPATIAL / "shanghai_nsga2_best_grid_allocation.csv"
+def geojson_from_gdf(gdf):
+    geojson = json.loads(gdf.to_json())
+    geojson["features"] = [normalize_feature_properties(f) for f in geojson["features"]]
+    return geojson
 
-    gdf = gpd.read_file(gpkg).to_crs("EPSG:4326")
-    gdf["geometry"] = gdf.geometry.simplify(0.00008, preserve_topology=True)
 
-    extra = pd.read_csv(csv)
-    extra_cols = [
+def load_full_grid_polygons():
+    scripts_dir = SOURCE_ROOT / "AI_agent_code" / "mubem-optagent" / "scripts"
+    import importlib.util
+
+    script_path = scripts_dir / "11_generate_intervention_heatmaps_and_spatial_maps.py"
+    spec = importlib.util.spec_from_file_location("spatial_maps", script_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    grid = module.load_shanghai_grid_polygons()
+    grid = grid.to_crs("EPSG:4326")
+    grid["geometry"] = grid.geometry.simplify(0.00008, preserve_topology=True)
+    return grid
+
+
+def load_spatial_context():
+    path = SPATIAL / "shanghai_spatial_context_grid_metrics.csv"
+    df = pd.read_csv(path)
+    numeric_cols = [
         "grid_id",
-        "strategy_id",
+        "LCZ_mode",
+        "LCZ_purity",
         "n_buildings",
         "floor_area_m2",
         "demand_GWh",
@@ -69,12 +86,184 @@ def build_allocation_geojson():
         "candidate_units",
         "candidate_potential_annual_carbon_tco2",
     ]
-    extra = extra[[c for c in extra_cols if c in extra.columns]]
-    merged = gdf.merge(extra, on=["grid_id", "strategy_id"], how="left")
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["grid_id"] = df["grid_id"].astype(int)
+    return df
 
-    geojson = json.loads(merged.to_json())
-    geojson["features"] = [normalize_feature_properties(f) for f in geojson["features"]]
-    return geojson
+
+def summarize_allocation_for_scenario(scenario_id):
+    if scenario_id == DEFAULT_SCENARIO_ID:
+        spatial_selected = SPATIAL / "shanghai_nsga2_best_grid_allocation.csv"
+        if spatial_selected.exists():
+            selected = pd.read_csv(spatial_selected)
+            selected["grid_id"] = pd.to_numeric(selected["grid_id"], errors="coerce")
+            selected = selected[selected["grid_id"].notna()].copy()
+            selected["grid_id"] = selected["grid_id"].astype(int)
+            if "cost_rmb" not in selected.columns:
+                selected["cost_rmb"] = None
+            if "period_carbon_reduction_tco2" not in selected.columns:
+                selected["period_carbon_reduction_tco2"] = None
+            return selected
+    path = RESULTS / f"allocation__{scenario_id}.csv"
+    if not path.exists():
+        return pd.DataFrame()
+    alloc = pd.read_csv(path)
+    alloc["grid_id"] = pd.to_numeric(alloc["grid_id"], errors="coerce")
+    alloc = alloc[alloc["grid_id"].notna()].copy()
+    alloc["grid_id"] = alloc["grid_id"].astype(int)
+    annual_col = "annual_carbon_reduction_tco2__cluster_weighted_13_14_25"
+    summary = (
+        alloc.groupby("grid_id", as_index=False)
+        .agg(
+            selected_units=("unit_id", "nunique"),
+            selected_buildings=("building_count", "sum"),
+            cost_rmb=("cost_rmb", "sum"),
+            period_carbon_reduction_tco2=("period_carbon_reduction_tco2", "sum"),
+            annual_carbon_reduction_tco2=(annual_col, "sum"),
+        )
+    )
+    dominant = (
+        alloc.groupby(["grid_id", "strategy_id"], as_index=False)
+        .agg(strategy_annual_carbon_tco2=(annual_col, "sum"), strategy_cost_rmb=("cost_rmb", "sum"))
+        .sort_values(["grid_id", "strategy_annual_carbon_tco2", "strategy_cost_rmb"], ascending=[True, False, False])
+        .drop_duplicates("grid_id")
+    )
+    summary = summary.merge(dominant[["grid_id", "strategy_id"]], on="grid_id", how="left")
+    return summary
+
+
+def build_allocation_geojson(full_grid, spatial_context, scenario_id):
+    allocation = summarize_allocation_for_scenario(scenario_id)
+    if allocation.empty:
+        return {"type": "FeatureCollection", "features": []}
+    context_cols = [
+        "grid_id",
+        "LCZ_mode",
+        "LCZ_purity",
+        "LCZ_label",
+        "lcz_class",
+        "n_buildings",
+        "floor_area_m2",
+        "demand_GWh",
+        "cooling_GWh",
+        "heating_GWh",
+        "baseline_eui_kwh_m2",
+        "function_mix_entropy",
+        "candidate_units",
+        "candidate_potential_annual_carbon_tco2",
+    ]
+    context = spatial_context[
+        [c for c in context_cols if c in spatial_context.columns and (c == "grid_id" or c not in allocation.columns)]
+    ]
+    merged = full_grid.merge(allocation, on="grid_id", how="inner").merge(context, on="grid_id", how="left")
+    merged["scenario_id"] = scenario_id
+    merged["selected_candidate_uptake_pct"] = (
+        merged["annual_carbon_reduction_tco2"]
+        / merged["candidate_potential_annual_carbon_tco2"].replace(0, pd.NA)
+        * 100
+    )
+    return geojson_from_gdf(merged)
+
+
+def build_allocation_geojson_by_scenario(full_grid, spatial_context, scenario_ids):
+    return {
+        scenario_id: build_allocation_geojson(full_grid, spatial_context, scenario_id)
+        for scenario_id in scenario_ids
+    }
+
+
+def build_opportunity_geojson(full_grid, spatial_context):
+    keep = spatial_context[
+        spatial_context["n_buildings"].notna() | spatial_context["candidate_potential_annual_carbon_tco2"].notna()
+    ].copy()
+    keep = keep.merge(summarize_recommended_candidate_by_grid(), on="grid_id", how="left")
+    keep["opportunity_status"] = "building stock"
+    keep.loc[keep["candidate_potential_annual_carbon_tco2"].notna(), "opportunity_status"] = "feasible candidate"
+    keep.loc[keep["selected_units"].notna(), "opportunity_status"] = "NSGA-II selected"
+    cols = [
+        "grid_id",
+        "opportunity_status",
+        "LCZ_mode",
+        "LCZ_purity",
+        "LCZ_label",
+        "lcz_class",
+        "n_buildings",
+        "floor_area_m2",
+        "demand_GWh",
+        "cooling_GWh",
+        "heating_GWh",
+        "baseline_eui_kwh_m2",
+        "function_mix_entropy",
+        "candidate_units",
+        "candidate_potential_annual_carbon_tco2",
+        "selected_units",
+        "selected_buildings",
+        "annual_carbon_reduction_tco2",
+        "strategy_id",
+        "strategy_label",
+        "selected_candidate_uptake_pct",
+        "recommended_strategy_id",
+        "recommended_strategy_name",
+        "recommended_units",
+        "recommended_buildings",
+        "recommended_cost_rmb",
+        "recommended_annual_carbon_tco2",
+        "recommended_rmb_per_tco2",
+    ]
+    merged = full_grid.merge(keep[[c for c in cols if c in keep.columns]], on="grid_id", how="inner")
+    return geojson_from_gdf(merged)
+
+
+def summarize_recommended_candidate_by_grid():
+    path = RESULTS / f"candidate_interventions__{DEFAULT_SCENARIO_ID}.csv"
+    if not path.exists():
+        return pd.DataFrame(columns=["grid_id"])
+    annual_col = "annual_carbon_reduction_tco2__cluster_weighted_13_14_25"
+    usecols = [
+        "grid_id",
+        "unit_id",
+        "strategy_id",
+        "strategy_name",
+        "feasible",
+        "cost_rmb",
+        "building_count",
+        annual_col,
+    ]
+    cand = pd.read_csv(path, usecols=lambda c: c in usecols)
+    cand = cand[cand["feasible"].astype(bool)].copy()
+    cand["grid_id"] = pd.to_numeric(cand["grid_id"], errors="coerce")
+    cand = cand[cand["grid_id"].notna()].copy()
+    cand["grid_id"] = cand["grid_id"].astype(int)
+    cand[annual_col] = pd.to_numeric(cand[annual_col], errors="coerce").fillna(0)
+    cand["cost_rmb"] = pd.to_numeric(cand["cost_rmb"], errors="coerce").fillna(0)
+    cand = cand[(cand[annual_col] > 0) & (cand["cost_rmb"] > 0)].copy()
+    if cand.empty:
+        return pd.DataFrame(columns=["grid_id"])
+    by_strategy = (
+        cand.groupby(["grid_id", "strategy_id", "strategy_name"], as_index=False)
+        .agg(
+            recommended_units=("unit_id", "nunique"),
+            recommended_buildings=("building_count", "sum"),
+            recommended_cost_rmb=("cost_rmb", "sum"),
+            recommended_annual_carbon_tco2=(annual_col, "sum"),
+        )
+    )
+    by_strategy["recommended_rmb_per_tco2"] = (
+        by_strategy["recommended_cost_rmb"] / by_strategy["recommended_annual_carbon_tco2"].replace(0, pd.NA)
+    )
+    by_strategy["score"] = (
+        by_strategy["recommended_annual_carbon_tco2"]
+        / by_strategy["recommended_cost_rmb"].clip(lower=1)
+    )
+    best = (
+        by_strategy.sort_values(["grid_id", "score", "recommended_annual_carbon_tco2"], ascending=[True, False, False])
+        .drop_duplicates("grid_id")
+        .rename(columns={"strategy_id": "recommended_strategy_id", "strategy_name": "recommended_strategy_name"})
+        .drop(columns=["score"])
+    )
+    return best
 
 
 def build_boundary_geojson():
@@ -130,18 +319,24 @@ def build_data():
     validation_path = FULL_YEAR / "public_building_eui_carbon_validation.csv"
     if validation_path.exists():
         public_validation = records(pd.read_csv(validation_path))
+    full_grid = load_full_grid_polygons()
+    spatial_context = load_spatial_context()
+    scenario_ids = scenario["scenario_id"].dropna().tolist()
+    allocation_by_scenario = build_allocation_geojson_by_scenario(full_grid, spatial_context, scenario_ids)
+    default_allocation = allocation_by_scenario.get(DEFAULT_SCENARIO_ID) or next(iter(allocation_by_scenario.values()))
+    opportunity_geojson = build_opportunity_geojson(full_grid, spatial_context)
 
     data = {
         "metadata": {
             "title": "Shanghai OptAgent Platform",
             "caseStudy": "Shanghai",
             "generatedFrom": str(SOURCE_ROOT),
-            "primaryMapLayer": "NSGA-II selected 500 m retrofit allocation grids",
+            "primaryMapLayer": "Full-city 500 m opportunity grids with NSGA-II selected overlays",
             "mapFeatureCount": None,
             "notes": [
-                "Full building stock is not bundled because the source CSV is large.",
-                "Use Mapbox vector tilesets for future building-footprint click layers.",
-                "The current map layer is EPSG:4326 and derived from research GPKG outputs.",
+                "Full building footprints are served through a Mapbox vector tileset.",
+                "Opportunity grids cover all building-stock or feasible-candidate 500 m cells.",
+                "NSGA-II selected grids remain sparse because the 1B RMB portfolio is budget-constrained.",
             ],
         },
         "coreMetrics": load_json(RESULTS / "core_performance_metrics.json"),
@@ -151,11 +346,13 @@ def build_data():
         "interventionLibrary": load_json(RESULTS / "intervention_library" / "formal_intervention_library.json"),
         "modelBenchmark": records(model),
         "publicValidation": public_validation,
-        "allocationGeojson": build_allocation_geojson(),
+        "opportunityGeojson": opportunity_geojson,
+        "allocationGeojson": default_allocation,
+        "allocationGeojsonByScenario": allocation_by_scenario,
         "boundaryGeojson": build_boundary_geojson(),
         "unitExamplesByGrid": build_unit_examples(),
     }
-    data["metadata"]["mapFeatureCount"] = len(data["allocationGeojson"]["features"])
+    data["metadata"]["mapFeatureCount"] = len(data["opportunityGeojson"]["features"])
     return data
 
 

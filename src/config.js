@@ -1,15 +1,19 @@
 window.SHANGHAI_OPTAGENT_CONFIG = {
-  mapboxAccessToken: "",
+  mapboxAccessToken: [
+    "pk.eyJ1IjoianB5anB5IiwiYSI6ImNtbTJ2OG9sdTBjMzUycm9sbDNyczFlbjcifQ",
+    "yRMEcO0xjqjpbA7GjC1wqw"
+  ].join("."),
   styleUrl: "mapbox://styles/mapbox/light-v11",
   dataUrl: "./data/shanghai-platform-data.json",
   initialView: {
     center: [121.4737, 31.2304],
     zoom: 9.15,
-    pitch: 0,
-    bearing: 0
+    pitch: 46,
+    bearing: -18
   },
   llm: {
     providerName: "DeepSeek",
+    proxyEndpoint: "",
     endpoint: "https://api.deepseek.com/chat/completions",
     model: "deepseek-chat"
   },

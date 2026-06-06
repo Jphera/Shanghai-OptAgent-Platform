@@ -416,6 +416,8 @@ h2 {
   display: block;
   margin-bottom: 4px;
   font-size: 18px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .summary-tile span {
@@ -514,10 +516,73 @@ h2 {
   gap: 10px;
 }
 
+.benchmark-figure {
+  margin: 0 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.benchmark-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 .agent-workbench {
   margin-bottom: 18px;
   padding-bottom: 18px;
   border-bottom: 1px solid var(--line);
+}
+
+.agent-compact-status {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 12px;
+  border: 1px solid rgba(22, 122, 117, 0.22);
+  border-radius: 8px;
+  background: rgba(22, 122, 117, 0.07);
+}
+
+.agent-compact-status strong {
+  font-size: 14px;
+}
+
+.agent-compact-status span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.agent-debug,
+.agent-settings {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.agent-debug summary,
+.agent-settings summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.agent-debug[open] summary,
+.agent-settings[open] summary {
+  margin-bottom: 12px;
+}
+
+.agent-settings .control-block {
+  margin: 0;
+  padding: 0;
+  border: 0;
 }
 
 .agent-card-grid {
@@ -724,6 +789,16 @@ h2 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #ffffff;
+}
+
+button.list-item {
+  width: 100%;
+  text-align: left;
+}
+
+.benchmark-card:hover {
+  border-color: rgba(22, 122, 117, 0.38);
+  background: rgba(22, 122, 117, 0.06);
 }
 
 .list-item strong {

@@ -80,8 +80,9 @@
           </div>
           <div class="toggle-list">
             <label><input id="toggleBoundary" type="checkbox" checked /> Shanghai boundary</label>
+            <label><input id="toggleOpportunity" type="checkbox" checked /> Full opportunity grids</label>
             <label><input id="toggleAllocation" type="checkbox" checked /> Selected allocation grids</label>
-            <label><input id="toggleBuildings" type="checkbox" checked /> Building footprints tileset</label>
+            <label><input id="toggleBuildings" type="checkbox" checked /> 3D building tileset</label>
             <label><input id="toggleLabels" type="checkbox" /> Grid labels</label>
           </div>
           <button id="fitView" type="button" class="wide-button">Fit Shanghai allocation</button>
@@ -89,7 +90,10 @@
 
         <div class="panel-section" id="panel-evidence">
           <div class="control-block">
-            <div class="section-title">Agent benchmark</div>
+            <div class="section-title">10-model agent benchmark</div>
+            <figure class="benchmark-figure">
+              <img src="./assets/figures/fig13_agent_model_benchmark.png" alt="Agent model benchmark across task accuracy, JSON validity, latency and ranking" />
+            </figure>
             <div id="modelBenchmark" class="stacked-list"></div>
           </div>
           <div class="control-block">
@@ -103,16 +107,9 @@
         </div>
 
         <div class="panel-section" id="panel-chat">
-          <div class="agent-workbench">
-            <div class="section-title">Five-agent workbench</div>
-            <div id="agentCards" class="agent-card-grid"></div>
-          </div>
           <div class="control-block">
-            <div class="section-title">Workflow run</div>
-            <div id="agentRunState" class="agent-run-state"></div>
-            <div id="agentTrace" class="agent-trace"></div>
-            <div id="agentEvidence" class="agent-evidence-lineage"></div>
-            <div id="agentGuardrails" class="agent-guardrails"></div>
+            <div class="section-title">Ask the five-agent system</div>
+            <div id="agentCompactStatus" class="agent-compact-status"></div>
             <div class="quick-prompt-grid">
               <button type="button" data-agent-prompt="Explain the selected building and its decision-unit evidence.">Explain selection</button>
               <button type="button" data-agent-prompt="Run a five-agent audit for the selected grid.">Run audit</button>
@@ -120,21 +117,34 @@
               <button type="button" data-agent-prompt="Compare the proposed agentic portfolio against the energy-only baseline.">Compare baselines</button>
             </div>
           </div>
-          <div class="control-block">
-            <div class="section-title">Agent settings</div>
-            <label for="apiKeyInput">API key</label>
-            <input id="apiKeyInput" type="password" placeholder="Optional DeepSeek API key" autocomplete="off" />
-            <label for="apiEndpointInput">Endpoint</label>
-            <input id="apiEndpointInput" type="text" />
-            <label for="apiModelInput">Model</label>
-            <input id="apiModelInput" type="text" />
-            <button id="saveApiSettings" type="button" class="wide-button">Save settings</button>
-          </div>
           <div id="chatLog" class="chat-log" aria-live="polite"></div>
           <form id="chatForm" class="chat-form">
-            <input id="chatInput" type="text" placeholder="Ask about the selected grid or portfolio..." />
+            <input id="chatInput" type="text" placeholder="Ask about a building, grid, scenario, or model benchmark..." />
             <button type="submit">Send</button>
           </form>
+          <details class="agent-debug">
+            <summary>Advanced trace and evidence</summary>
+            <div class="agent-workbench">
+              <div class="section-title">Five-agent workbench</div>
+              <div id="agentCards" class="agent-card-grid"></div>
+            </div>
+            <div id="agentRunState" class="agent-run-state"></div>
+            <div id="agentTrace" class="agent-trace"></div>
+            <div id="agentEvidence" class="agent-evidence-lineage"></div>
+            <div id="agentGuardrails" class="agent-guardrails"></div>
+          </details>
+          <details class="agent-settings">
+            <summary>Connection settings</summary>
+            <div class="control-block">
+              <label for="apiKeyInput">API key</label>
+              <input id="apiKeyInput" type="password" placeholder="Optional local API key; do not use for public demo" autocomplete="off" />
+              <label for="apiEndpointInput">Endpoint</label>
+              <input id="apiEndpointInput" type="text" />
+              <label for="apiModelInput">Model</label>
+              <input id="apiModelInput" type="text" />
+              <button id="saveApiSettings" type="button" class="wide-button">Save settings</button>
+            </div>
+          </details>
         </div>
       </section>
 
