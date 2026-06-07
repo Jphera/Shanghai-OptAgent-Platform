@@ -1278,6 +1278,7 @@ button.list-item {
   color: var(--muted);
   font-size: 14px;
   line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .message.user {
@@ -1289,6 +1290,27 @@ button.list-item {
 .message.assistant {
   border-color: rgba(22, 122, 117, 0.26);
   background: var(--teal-soft);
+}
+
+.message.streaming::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 3px;
+  border-radius: 2px;
+  background: rgba(22, 122, 117, 0.65);
+  vertical-align: -2px;
+  animation: pulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .mapboxgl-popup-content {

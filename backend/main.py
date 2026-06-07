@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -116,6 +117,48 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
     }
 
 
+@app.post("/api/chat/stream")
+async def chat_stream(payload: ChatRequest) -> StreamingResponse:
+    message = payload.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    request_context = normalize_context(payload.context)
+    compact_context = build_compact_context(request_context)
+    api_key = os.getenv("DEEPSEEK_API_KEY", "").strip()
+
+    async def generate():
+        yield sse_event("status", {"text": "OptAgent is retrieving loaded Shanghai evidence."})
+        if not api_key:
+            yield sse_event("status", {"text": "DeepSeek key is not configured; using local evidence fallback."})
+            yield sse_event("token", {"text": local_answer(message, compact_context)})
+            yield sse_event("done", {"mode": "local-backend", "warning": "DEEPSEEK_API_KEY is not configured."})
+            return
+
+        try:
+            yield sse_event("status", {"text": "DeepSeek is generating an evidence-grounded answer."})
+            async for event_name, payload_data in stream_deepseek(message, payload.model, compact_context, api_key):
+                yield sse_event(event_name, payload_data)
+        except (HTTPException, httpx.HTTPError) as error:
+            detail = str(error).replace(api_key, "[redacted]")[:220]
+            yield sse_event("status", {"text": "DeepSeek failed; switching to local evidence fallback."})
+            yield sse_event("token", {"text": local_answer(message, compact_context)})
+            yield sse_event(
+                "done",
+                {"mode": "local-backend", "warning": f"DeepSeek request failed ({type(error).__name__}: {detail})."},
+            )
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def sse_event(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
 def normalize_context(raw: dict[str, Any] | str | None) -> dict[str, Any]:
     if raw is None:
         return {}
@@ -197,25 +240,7 @@ def top_energy_type_rows(energy: dict[str, Any]) -> list[dict[str, Any]]:
 
 async def call_deepseek(message: str, model: str, context: dict[str, Any], api_key: str) -> str:
     endpoint = os.getenv("DEEPSEEK_ENDPOINT", "https://api.deepseek.com/chat/completions")
-    system = (
-        "You are Shanghai OptAgent, a backend research assistant for an urban-scale "
-        "microclimate-aware decarbonization platform. Answer using only the supplied "
-        "platform context. Distinguish selected NSGA-II allocation grids from full-city "
-        "opportunity grids, WRF/LCZ evidence grids, and TMY-vs-WRF energy evidence. Be concise, quantitative, and "
-        "explicit about uncertainty. If the user has not selected a map object, answer at the city/platform/paper level; "
-        "do not ask them to select a grid unless the question truly needs object-level evidence."
-    )
-    body = {
-        "model": model or "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": system},
-            {
-                "role": "user",
-                "content": f"Platform context:\n{json.dumps(context, ensure_ascii=False)[:18000]}\n\nQuestion:\n{message}",
-            },
-        ],
-        "temperature": 0.2,
-    }
+    body = deepseek_request_body(message, model, context, stream=False)
     async with httpx.AsyncClient(timeout=45) as client:
         response = await client.post(
             endpoint,
@@ -226,6 +251,66 @@ async def call_deepseek(message: str, model: str, context: dict[str, Any], api_k
         raise HTTPException(status_code=response.status_code, detail=response.text[:1000])
     result = response.json()
     return result.get("choices", [{}])[0].get("message", {}).get("content") or "DeepSeek returned no readable answer."
+
+
+async def stream_deepseek(message: str, model: str, context: dict[str, Any], api_key: str):
+    endpoint = os.getenv("DEEPSEEK_ENDPOINT", "https://api.deepseek.com/chat/completions")
+    body = deepseek_request_body(message, model, context, stream=True)
+    reasoning_seen = False
+    async with httpx.AsyncClient(timeout=60) as client:
+        async with client.stream(
+            "POST",
+            endpoint,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json=body,
+        ) as response:
+            if response.status_code >= 400:
+                detail = (await response.aread()).decode("utf-8", errors="ignore")
+                raise HTTPException(status_code=response.status_code, detail=detail[:1000])
+            async for line in response.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                raw = line.removeprefix("data:").strip()
+                if not raw:
+                    continue
+                if raw == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                delta = chunk.get("choices", [{}])[0].get("delta", {})
+                if delta.get("reasoning_content") and not reasoning_seen:
+                    reasoning_seen = True
+                    yield "status", {"text": "The reasoning model is forming an evidence trace."}
+                content = delta.get("content")
+                if content:
+                    yield "token", {"text": content}
+    yield "done", {"mode": "deepseek-stream"}
+
+
+def deepseek_request_body(message: str, model: str, context: dict[str, Any], stream: bool) -> dict[str, Any]:
+    system = (
+        "You are Shanghai OptAgent, a backend research assistant for an urban-scale "
+        "microclimate-aware decarbonization platform. Answer using only the supplied "
+        "platform context. Distinguish selected NSGA-II allocation grids from full-city "
+        "opportunity grids, WRF/LCZ evidence grids, and TMY-vs-WRF energy evidence. Be concise, quantitative, and "
+        "explicit about uncertainty. If the user has not selected a map object, answer at the city/platform/paper level; "
+        "do not ask them to select a grid unless the question truly needs object-level evidence. "
+        "Write like a capable research copilot in the user's language. Avoid canned button-style answers."
+    )
+    return {
+        "model": model or "deepseek-chat",
+        "messages": [
+            {"role": "system", "content": system},
+            {
+                "role": "user",
+                "content": f"Platform context:\n{json.dumps(context, ensure_ascii=False)[:18000]}\n\nQuestion:\n{message}",
+            },
+        ],
+        "temperature": 0.2,
+        "stream": stream,
+    }
 
 
 def local_answer(message: str, context: dict[str, Any]) -> str:

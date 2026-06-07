@@ -27,10 +27,10 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
     note: "Mapbox Studio tileset 11_shanghai_buildings_3d_height. Source-layer id was read from TileJSON vector_layers."
   },
   microclimateTileset: {
-    enabled: false,
-    sourceUrl: "mapbox://jpyjpy.qrb7lj6bn0ko",
-    sourceLayer: "f5048eeda1c5e1f97408",
+    enabled: true,
+    sourceUrl: "mapbox://jpyjpy.c5i4qqzurwmr",
+    sourceLayer: "d74ca75d65e4bad051c4",
     minzoom: 8,
-    note: "Disabled for now because the older 09 tileset only contains opportunity grids. The frontend uses the full WRF 500 m GeoJSON plus hourly binary time-series."
+    note: "Mapbox Studio tileset 09_shanghai_microclimate_500m_summary. The app keeps the local GeoJSON source active for hourly WRF playback and uses this uploaded tileset as the static Mapbox reference layer."
   }
 };

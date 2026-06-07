@@ -419,6 +419,7 @@ function initMap() {
     zoom: initial.zoom || 14.55,
     pitch: initial.pitch ?? 62,
     bearing: initial.bearing || 0,
+    antialias: true,
     attributionControl: true
   });
 
@@ -486,20 +487,20 @@ function addMapSourcesAndLayers() {
     generateId: true
   });
 
-  const microTileset = CONFIG.microclimateTileset || {};
-  if (microTileset.enabled && microTileset.sourceUrl && microTileset.sourceLayer) {
-    map.addSource("microclimate", {
-      type: "vector",
-      url: microTileset.sourceUrl
-    });
-    state.microclimateSourceMode = "vector";
-  } else if (state.microclimate && state.microclimate.microclimateGeojson) {
+  if (state.microclimate && state.microclimate.microclimateGeojson) {
     map.addSource("microclimate", {
       type: "geojson",
       data: state.microclimate.microclimateGeojson,
       generateId: true
     });
     state.microclimateSourceMode = "geojson";
+  }
+  const microTileset = CONFIG.microclimateTileset || {};
+  if (microTileset.enabled && microTileset.sourceUrl && microTileset.sourceLayer) {
+    map.addSource("microclimate-uploaded", {
+      type: "vector",
+      url: microTileset.sourceUrl
+    });
   }
 
   map.addLayer({
@@ -768,18 +769,11 @@ function addBuildingTilesetLayer() {
         "source-layer": cfg.sourceLayer,
         minzoom: cfg.minzoom || 12.5,
         paint: {
-          "fill-extrusion-color": buildingFunctionColorExpression(),
-          "fill-extrusion-height": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            cfg.minzoom || 12.5,
-            ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 0.18],
-            (cfg.minzoom || 12.5) + 1.2,
-            ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 1.25]
-          ],
+          "fill-extrusion-color": buildingHeightColorExpression(),
+          "fill-extrusion-height": ["coalesce", ["to-number", ["get", "height_m"]], 8],
           "fill-extrusion-base": 0,
-          "fill-extrusion-opacity": 0.76
+          "fill-extrusion-opacity": 0.72,
+          "fill-extrusion-vertical-gradient": true
         }
       });
     }
@@ -791,11 +785,11 @@ function addBuildingTilesetLayer() {
         type: "line",
         source: "shanghai-buildings",
         "source-layer": cfg.sourceLayer,
-        minzoom: cfg.minzoom || 12.5,
+        minzoom: 16.2,
         paint: {
-          "line-color": "#ffffff",
-          "line-opacity": 0.42,
-          "line-width": 0.45
+          "line-color": "#314447",
+          "line-opacity": 0.16,
+          "line-width": 0.25
         }
       });
     }
@@ -868,6 +862,26 @@ function buildingFunctionColorExpression() {
   Object.entries(FUNCTION_COLORS).forEach(([key, color]) => expression.push(key, color));
   expression.push("#8d989d");
   return expression;
+}
+
+function buildingHeightColorExpression() {
+  return [
+    "interpolate",
+    ["linear"],
+    ["coalesce", ["to-number", ["get", "height_m"]], 8],
+    0,
+    "#d8dfdc",
+    12,
+    "#bdcbc5",
+    35,
+    "#8ca89e",
+    80,
+    "#67877f",
+    160,
+    "#4f6870",
+    260,
+    "#384d58"
+  ];
 }
 
 function opportunityColorExpression() {
@@ -3479,10 +3493,16 @@ async function submitAgentMessage(message) {
     highlightAgentHotspots("selected");
   }
   setAgentThinking("Querying the secure DeepSeek agent service on Render.");
-  const reply = await answerQuestion(clean);
-  setAgentThinking("Composing an evidence-grounded decision response.");
-  addChatMessage("assistant", reply);
-  window.setTimeout(() => setAgentThinking(""), 650);
+  const assistantNode = addChatMessage("assistant", "");
+  assistantNode.classList.add("streaming");
+  try {
+    await answerQuestion(clean, assistantNode);
+  } catch (error) {
+    setChatMessageText(assistantNode, `The agent call failed, so I used the local platform evidence.\n\n${localAgentAnswer(clean)}`);
+  } finally {
+    assistantNode.classList.remove("streaming");
+    window.setTimeout(() => setAgentThinking(""), 650);
+  }
 }
 
 function setAgentThinking(text) {
@@ -3533,26 +3553,111 @@ function saveApiSettings() {
   addChatMessage("assistant", "Settings saved in this browser. The API key is not committed to the repository.");
 }
 
-async function answerQuestion(message) {
+async function answerQuestion(message, targetNode = null) {
   const proxyEndpoint = CONFIG.llm && CONFIG.llm.proxyEndpoint;
   const model = localStorage.getItem(STORAGE.apiModel) || (CONFIG.llm && CONFIG.llm.model);
   if (proxyEndpoint && model) {
+    if (targetNode && window.ReadableStream) {
+      try {
+        await streamAgentProxy(message, agentStreamEndpoint(proxyEndpoint), model, targetNode);
+        return "";
+      } catch (error) {
+        setAgentThinking("Streaming failed; retrying the secure agent proxy.");
+      }
+    }
     try {
-      return await callAgentProxy(message, proxyEndpoint, model);
+      const reply = await callAgentProxy(message, proxyEndpoint, model);
+      if (targetNode) setChatMessageText(targetNode, reply);
+      return reply;
     } catch (error) {
-      return `The secure agent proxy failed, so I fell back to the local agent. ${localAgentAnswer(message)}`;
+      const reply = `The secure agent proxy failed, so I fell back to the local agent.\n\n${localAgentAnswer(message)}`;
+      if (targetNode) setChatMessageText(targetNode, reply);
+      return reply;
     }
   }
   const apiKey = localStorage.getItem(STORAGE.apiKey);
   const endpoint = localStorage.getItem(STORAGE.apiEndpoint);
   if (apiKey && endpoint && model) {
     try {
-      return await callRemoteModel(message, apiKey, endpoint, model);
+      const reply = await callRemoteModel(message, apiKey, endpoint, model);
+      if (targetNode) setChatMessageText(targetNode, reply);
+      return reply;
     } catch (error) {
-      return `The remote model call failed, so I fell back to the local agent. ${localAgentAnswer(message)}`;
+      const reply = `The remote model call failed, so I fell back to the local agent.\n\n${localAgentAnswer(message)}`;
+      if (targetNode) setChatMessageText(targetNode, reply);
+      return reply;
     }
   }
-  return localAgentAnswer(message);
+  const reply = localAgentAnswer(message);
+  if (targetNode) setChatMessageText(targetNode, reply);
+  return reply;
+}
+
+function agentStreamEndpoint(endpoint) {
+  if (endpoint.endsWith("/stream")) return endpoint;
+  if (endpoint.endsWith("/chat")) return `${endpoint}/stream`;
+  return endpoint.replace(/\/$/, "") + "/stream";
+}
+
+async function streamAgentProxy(message, endpoint, model, targetNode) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      message,
+      context: buildContextPrompt()
+    })
+  });
+  if (!response.ok || !response.body) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+  let answer = "";
+  let mode = "deepseek-stream";
+  let warning = "";
+
+  const consumeEvent = (rawEvent) => {
+    if (!rawEvent.trim()) return;
+    let eventName = "message";
+    const dataLines = [];
+    rawEvent.split(/\r?\n/).forEach((line) => {
+      if (line.startsWith("event:")) eventName = line.slice(6).trim();
+      if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    });
+    if (!dataLines.length) return;
+    let payload = {};
+    try {
+      payload = JSON.parse(dataLines.join("\n"));
+    } catch (error) {
+      return;
+    }
+    if (eventName === "status") {
+      setAgentThinking(payload.text || "OptAgent is working.");
+    } else if (eventName === "token") {
+      answer += payload.text || "";
+      setChatMessageText(targetNode, answer);
+    } else if (eventName === "done") {
+      mode = payload.mode || mode;
+      warning = payload.warning || "";
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const parts = buffer.split(/\n\n/);
+    buffer = parts.pop() || "";
+    parts.forEach(consumeEvent);
+  }
+  if (buffer) consumeEvent(buffer);
+  const label = mode === "deepseek-stream" ? "DeepSeek streaming agent" : mode === "local-backend" ? "Render local evidence fallback" : mode;
+  const suffix = warning ? `\n\n[${label}. ${warning}]` : `\n\n[${label}.]`;
+  setChatMessageText(targetNode, `${answer || localAgentAnswer(message)}${suffix}`);
 }
 
 async function callAgentProxy(message, endpoint, model) {
@@ -3849,12 +3954,20 @@ function taskShortLabel(task) {
 
 function addChatMessage(role, text) {
   const log = document.getElementById("chatLog");
-  if (!log) return;
+  if (!log) return null;
   const node = document.createElement("div");
   node.className = `message ${role}`;
-  node.textContent = text;
+  setChatMessageText(node, text);
   log.appendChild(node);
   log.scrollTop = log.scrollHeight;
+  return node;
+}
+
+function setChatMessageText(node, text) {
+  if (!node) return;
+  node.textContent = text || "";
+  const log = document.getElementById("chatLog");
+  if (log) log.scrollTop = log.scrollHeight;
 }
 
 function scenarioLabel(id) {
