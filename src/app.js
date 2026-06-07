@@ -779,12 +779,7 @@ function addBuildingTilesetLayer() {
             ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 1.25]
           ],
           "fill-extrusion-base": 0,
-          "fill-extrusion-opacity": [
-            "case",
-            ["boolean", ["feature-state", "hover"], false],
-            0.88,
-            0.72
-          ]
+          "fill-extrusion-opacity": 0.76
         }
       });
     }
