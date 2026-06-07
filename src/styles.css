@@ -268,6 +268,139 @@ h2 {
   line-height: 1.35;
 }
 
+.metric-card.wide {
+  grid-column: 1 / -1;
+}
+
+.microclimate-head {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.microclimate-head h2 {
+  font-size: 20px;
+}
+
+.micro-metric-grid .metric-card strong {
+  font-size: 21px;
+  word-break: break-word;
+}
+
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.segmented-control.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.segmented-control button {
+  min-height: 38px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.segmented-control button.active {
+  border-color: var(--teal);
+  background: var(--teal);
+  color: #ffffff;
+}
+
+.micro-series-chart {
+  min-height: 128px;
+}
+
+.micro-series-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.micro-series-chart rect {
+  fill: #f7f8f4;
+  stroke: var(--line);
+}
+
+.micro-series-chart polyline {
+  fill: none;
+  stroke: var(--teal);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.micro-series-chart text {
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.micro-list {
+  display: grid;
+  gap: 8px;
+}
+
+.micro-row {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.micro-row.active {
+  border-color: rgba(22, 122, 117, 0.46);
+  background: rgba(22, 122, 117, 0.07);
+}
+
+.micro-row-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--ink);
+}
+
+.micro-row-top strong,
+.micro-row-top em {
+  font-size: 13px;
+  font-style: normal;
+}
+
+.fig10-card-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.fig10-card-grid button {
+  display: grid;
+  gap: 5px;
+  min-height: 78px;
+  padding: 11px;
+  text-align: left;
+  align-content: start;
+}
+
+.fig10-card-grid strong {
+  font-size: 14px;
+}
+
+.fig10-card-grid span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.compact-figure {
+  margin-top: 10px;
+}
+
 .control-block {
   margin-bottom: 18px;
   padding-bottom: 18px;
@@ -645,6 +778,10 @@ h2 {
   height: 100%;
   border-radius: inherit;
   background: var(--teal);
+}
+
+.rank-fill.cool {
+  background: #286ca3;
 }
 
 .task-chip-grid,

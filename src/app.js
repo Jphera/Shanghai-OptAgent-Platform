@@ -46,6 +46,78 @@ const METRIC_LABELS = {
   max_microclimate_sensitivity_pct: "Microclimate sensitivity"
 };
 
+const MICRO_SEASONS = ["cooling", "transition", "heating"];
+
+const MICRO_METRICS = {
+  sensitivity: {
+    label: "LCZ sensitivity",
+    short: "Sensitivity",
+    unit: "%",
+    kind: "lcz",
+    palette: ["#f2f5f3", "#87b9ad", "#e4b354", "#bd4a42"]
+  },
+  temp: {
+    label: "WRF air temperature",
+    short: "Temperature",
+    unit: "degC",
+    kind: "wrf",
+    palette: ["#285c9d", "#7bb7c8", "#f0c45d", "#bd4a42"]
+  },
+  rh: {
+    label: "WRF relative humidity",
+    short: "Humidity",
+    unit: "%",
+    kind: "wrf",
+    palette: ["#ede7c9", "#9ec6bd", "#4f8aa8", "#315d84"]
+  },
+  solar: {
+    label: "WRF shortwave radiation",
+    short: "Solar",
+    unit: "W/m2",
+    kind: "wrf",
+    palette: ["#f2f5f3", "#e5d27b", "#d8902f", "#9b473d"]
+  },
+  wind: {
+    label: "WRF wind speed",
+    short: "Wind",
+    unit: "m/s",
+    kind: "wrf",
+    palette: ["#edf1f2", "#9ab8b4", "#577e91", "#284f67"]
+  }
+};
+
+const ENERGY_MODES = {
+  building: "Single building",
+  grid: "500 m grid"
+};
+
+const ENERGY_METRICS = {
+  diff_pct: {
+    label: "WRF vs TMY difference",
+    short: "Diff %",
+    unit: "%",
+    decimals: 1
+  },
+  tmy_kwh: {
+    label: "TMY week energy",
+    short: "TMY kWh",
+    unit: "kWh",
+    decimals: 0
+  },
+  wrf_kwh: {
+    label: "WRF week energy",
+    short: "WRF kWh",
+    unit: "kWh",
+    decimals: 0
+  },
+  delta_kwh: {
+    label: "WRF minus TMY",
+    short: "Delta kWh",
+    unit: "kWh",
+    decimals: 0
+  }
+};
+
 const FUNCTION_COLORS = {
   "住宅类": "#4d8b57",
   "办公就业类": "#286ca3",
@@ -143,7 +215,22 @@ const state = {
   activeArchetypeKey: null,
   popup: null,
   selectedOpportunity: null,
-  selectedBuilding: null
+  selectedBuilding: null,
+  microclimate: null,
+  activeMicroSeason: "cooling",
+  activeMicroMetric: "sensitivity",
+  selectedMicroclimate: null,
+  microclimateSourceMode: null,
+  energy: null,
+  energyPromise: null,
+  energyError: null,
+  energyShardCache: new Map(),
+  activeEnergyMode: "building",
+  activeEnergySeason: "cooling",
+  activeEnergyMetric: "diff_pct",
+  selectedEnergyGrid: null,
+  energyMapEventsBound: false,
+  buildingLayerError: null
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -156,7 +243,10 @@ async function init() {
   restoreApiSettings();
 
   state.data = await loadData();
+  state.microclimate = await loadMicroclimateData();
   renderOverview();
+  renderMicroclimatePanel();
+  renderEnergyPanel();
   renderEvidence();
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace("Initialize the Shanghai OptAgent workflow."));
@@ -170,6 +260,117 @@ async function loadData() {
     throw new Error(`Unable to load platform data: ${response.status}`);
   }
   return response.json();
+}
+
+async function loadMicroclimateData() {
+  const url = CONFIG.microclimateDataUrl;
+  if (!url) return null;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Unable to load microclimate data: ${response.status}`);
+    return response.json();
+  } catch (error) {
+    console.warn(error);
+    return null;
+  }
+}
+
+async function ensureEnergyData() {
+  if (state.energy) return state.energy;
+  if (state.energyPromise) return state.energyPromise;
+  const url = CONFIG.energyDataUrl;
+  if (!url) return null;
+  state.energyError = null;
+  state.energyPromise = fetch(url)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Unable to load energy data: ${response.status}`);
+      return response.json();
+    })
+    .then((data) => {
+      state.energy = data;
+      state.energyPromise = null;
+      ensureEnergyMapLayer();
+      syncEnergyLayer();
+      renderEnergyPanel();
+      return data;
+    })
+    .catch((error) => {
+      console.warn(error);
+      state.energyError = error.message || "Energy data failed to load.";
+      state.energyPromise = null;
+      renderEnergyPanel();
+      return null;
+    });
+  renderEnergyPanel();
+  return state.energyPromise;
+}
+
+function energyShardKey(bldgId) {
+  const count = Number(state.energy?.buildingShards?.count || 0);
+  const id = Number(bldgId);
+  if (!count || !Number.isFinite(id)) return null;
+  const shard = ((Math.trunc(id) % count) + count) % count;
+  return String(shard).padStart(2, "0");
+}
+
+function energyShardUrl(key) {
+  const pattern = state.energy?.buildingShards?.urlPattern;
+  if (!pattern) return "";
+  return pattern.replace("{shard}", key);
+}
+
+function rowToBuildingEnergy(columns, row) {
+  const record = {};
+  columns.forEach((column, index) => {
+    record[column] = row[index];
+  });
+  if (record.type_code !== null && record.type_code !== undefined) {
+    record.type_label = state.energy?.typeLabels?.[Number(record.type_code)] || null;
+  }
+  return record;
+}
+
+async function loadBuildingEnergyRecord(bldgId) {
+  await ensureEnergyData();
+  if (!state.energy) return null;
+  const id = Number(bldgId);
+  const key = energyShardKey(id);
+  if (!key) return null;
+  if (!state.energyShardCache.has(key)) {
+    const response = await fetch(energyShardUrl(key));
+    if (!response.ok) throw new Error(`Unable to load building energy shard ${key}: ${response.status}`);
+    const json = await response.json();
+    const lookup = new Map();
+    (json.rows || []).forEach((row) => {
+      const record = rowToBuildingEnergy(json.columns || [], row);
+      lookup.set(Number(record.bldg_id), record);
+    });
+    state.energyShardCache.set(key, lookup);
+  }
+  return state.energyShardCache.get(key).get(id) || null;
+}
+
+function cachedBuildingEnergyRecord(bldgId) {
+  const key = energyShardKey(bldgId);
+  if (!key || !state.energyShardCache.has(key)) return null;
+  return state.energyShardCache.get(key).get(Number(bldgId)) || null;
+}
+
+function hydrateSelectedBuildingEnergy(bldgId) {
+  if (!bldgId) return;
+  loadBuildingEnergyRecord(bldgId)
+    .then((record) => {
+      const current = Number(state.selectedBuilding?.properties?.bldg_id);
+      if (record && Number(bldgId) === current) {
+        renderSelectedBuilding();
+        renderEnergyPanel();
+      }
+    })
+    .catch((error) => {
+      console.warn(error);
+      state.energyError = error.message || "Building energy failed to load.";
+      renderEnergyPanel();
+    });
 }
 
 function initMap() {
@@ -232,6 +433,12 @@ function wireTokenControls() {
   });
 }
 
+function microclimateSourceLayerSpec() {
+  return state.microclimateSourceMode === "vector" && CONFIG.microclimateTileset?.sourceLayer
+    ? { "source-layer": CONFIG.microclimateTileset.sourceLayer }
+    : {};
+}
+
 function addMapSourcesAndLayers() {
   const map = state.map;
   map.addSource("shanghai-boundary", {
@@ -250,6 +457,22 @@ function addMapSourcesAndLayers() {
     data: state.data.opportunityGeojson,
     generateId: true
   });
+
+  const microTileset = CONFIG.microclimateTileset || {};
+  if (microTileset.enabled && microTileset.sourceUrl && microTileset.sourceLayer) {
+    map.addSource("microclimate", {
+      type: "vector",
+      url: microTileset.sourceUrl
+    });
+    state.microclimateSourceMode = "vector";
+  } else if (state.microclimate && state.microclimate.microclimateGeojson) {
+    map.addSource("microclimate", {
+      type: "geojson",
+      data: state.microclimate.microclimateGeojson,
+      generateId: true
+    });
+    state.microclimateSourceMode = "geojson";
+  }
 
   map.addLayer({
     id: "boundary-fill",
@@ -322,6 +545,47 @@ function addMapSourcesAndLayers() {
       "line-opacity": 0.95
     }
   });
+
+  if (map.getSource("microclimate")) {
+    map.addLayer({
+      id: "microclimate-fill",
+      type: "fill",
+      source: "microclimate",
+      ...microclimateSourceLayerSpec(),
+      layout: { visibility: "none" },
+      paint: {
+        "fill-color": microclimateColorExpression(),
+        "fill-opacity": 0.66
+      }
+    });
+
+    map.addLayer({
+      id: "microclimate-line",
+      type: "line",
+      source: "microclimate",
+      ...microclimateSourceLayerSpec(),
+      layout: { visibility: "none" },
+      paint: {
+        "line-color": "#ffffff",
+        "line-width": 0.45,
+        "line-opacity": 0.62
+      }
+    });
+
+    map.addLayer({
+      id: "microclimate-selected-line",
+      type: "line",
+      source: "microclimate",
+      ...microclimateSourceLayerSpec(),
+      layout: { visibility: "none" },
+      filter: ["==", ["get", "grid_id"], -1],
+      paint: {
+        "line-color": "#172126",
+        "line-width": 3,
+        "line-opacity": 0.95
+      }
+    });
+  }
 
   map.addLayer({
     id: "allocation-fill",
@@ -421,7 +685,24 @@ function addMapSourcesAndLayers() {
     map.getCanvas().style.cursor = "";
   });
 
+  if (map.getLayer("microclimate-fill")) {
+    map.on("click", "microclimate-fill", (event) => {
+      const feature = event.features && event.features[0];
+      if (!feature) return;
+      selectMicroclimateFeature(feature, event.lngLat);
+    });
+
+    map.on("mouseenter", "microclimate-fill", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+
+    map.on("mouseleave", "microclimate-fill", () => {
+      map.getCanvas().style.cursor = "";
+    });
+  }
+
   applyMapFilters();
+  syncMicroclimateLayer();
   configureBuildingToggle();
   renderLegend();
 }
@@ -430,81 +711,88 @@ function addBuildingTilesetLayer() {
   const cfg = CONFIG.buildingTileset || {};
   if (!cfg.enabled || !cfg.sourceUrl || !cfg.sourceLayer || !state.map) return;
   const map = state.map;
+  state.buildingLayerError = null;
 
-  map.addSource("shanghai-buildings", {
-    type: "vector",
-    url: cfg.sourceUrl
-  });
+  try {
+    map.addSource("shanghai-buildings", {
+      type: "vector",
+      url: cfg.sourceUrl
+    });
 
-  map.addLayer({
-    id: "building-fill",
-    type: "fill-extrusion",
-    source: "shanghai-buildings",
-    "source-layer": cfg.sourceLayer,
-    minzoom: cfg.minzoom || 12.5,
-    paint: {
-      "fill-extrusion-color": buildingFunctionColorExpression(),
-      "fill-extrusion-height": [
-        "interpolate",
-        ["linear"],
-        ["zoom"],
-        cfg.minzoom || 12.5,
-        ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 0.18],
-        (cfg.minzoom || 12.5) + 1.2,
-        ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 1.25]
-      ],
-      "fill-extrusion-base": 0,
-      "fill-extrusion-opacity": [
-        "case",
-        ["boolean", ["feature-state", "hover"], false],
-        0.88,
-        0.72
-      ]
-    }
-  });
+    map.addLayer({
+      id: "building-fill",
+      type: "fill-extrusion",
+      source: "shanghai-buildings",
+      "source-layer": cfg.sourceLayer,
+      minzoom: cfg.minzoom || 12.5,
+      paint: {
+        "fill-extrusion-color": buildingFunctionColorExpression(),
+        "fill-extrusion-height": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          cfg.minzoom || 12.5,
+          ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 0.18],
+          (cfg.minzoom || 12.5) + 1.2,
+          ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 1.25]
+        ],
+        "fill-extrusion-base": 0,
+        "fill-extrusion-opacity": [
+          "case",
+          ["boolean", ["feature-state", "hover"], false],
+          0.88,
+          0.72
+        ]
+      }
+    });
 
-  map.addLayer({
-    id: "building-line",
-    type: "line",
-    source: "shanghai-buildings",
-    "source-layer": cfg.sourceLayer,
-    minzoom: cfg.minzoom || 12.5,
-    paint: {
-      "line-color": "#ffffff",
-      "line-opacity": 0.42,
-      "line-width": 0.45
-    }
-  });
+    map.addLayer({
+      id: "building-line",
+      type: "line",
+      source: "shanghai-buildings",
+      "source-layer": cfg.sourceLayer,
+      minzoom: cfg.minzoom || 12.5,
+      paint: {
+        "line-color": "#ffffff",
+        "line-opacity": 0.42,
+        "line-width": 0.45
+      }
+    });
 
-  map.addLayer({
-    id: "building-selected-line",
-    type: "line",
-    source: "shanghai-buildings",
-    "source-layer": cfg.sourceLayer,
-    minzoom: cfg.minzoom || 12.5,
-    filter: ["==", ["get", "bldg_id"], -1],
-    paint: {
-      "line-color": "#172126",
-      "line-width": 2.4,
-      "line-opacity": 0.95
-    }
-  });
+    map.addLayer({
+      id: "building-selected-line",
+      type: "line",
+      source: "shanghai-buildings",
+      "source-layer": cfg.sourceLayer,
+      minzoom: cfg.minzoom || 12.5,
+      filter: ["==", ["get", "bldg_id"], -1],
+      paint: {
+        "line-color": "#172126",
+        "line-width": 2.4,
+        "line-opacity": 0.95
+      }
+    });
 
-  map.on("click", "building-fill", (event) => {
-    const feature = event.features && event.features[0];
-    if (!feature) return;
-    selectBuildingFeature(feature, event.lngLat);
-  });
+    map.on("click", "building-fill", (event) => {
+      const feature = event.features && event.features[0];
+      if (!feature) return;
+      selectBuildingFeature(feature, event.lngLat);
+    });
 
-  map.on("mouseenter", "building-fill", () => {
-    map.getCanvas().style.cursor = "pointer";
-  });
+    map.on("mouseenter", "building-fill", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
 
-  map.on("mouseleave", "building-fill", () => {
-    map.getCanvas().style.cursor = "";
-  });
+    map.on("mouseleave", "building-fill", () => {
+      map.getCanvas().style.cursor = "";
+    });
 
-  updateBuildingStatus();
+    updateBuildingStatus();
+  } catch (error) {
+    console.warn("Unable to add 3D building tileset layer", error);
+    state.buildingLayerError = error.message || "Mapbox layer error";
+    updateBuildingStatus();
+  }
 }
 
 function buildingFunctionColorExpression() {
@@ -542,6 +830,192 @@ function opportunityColorExpression() {
     ],
     "#d8e1e6"
   ];
+}
+
+function microclimateMetricField(metric = state.activeMicroMetric, season = state.activeMicroSeason) {
+  if (metric === "sensitivity") return `sensitivity_${season}_pct`;
+  return `wrf_${season}_${metric}_mean`;
+}
+
+function microclimateMetricLabel(metric = state.activeMicroMetric, season = state.activeMicroSeason) {
+  const meta = MICRO_METRICS[metric] || MICRO_METRICS.sensitivity;
+  const seasonMeta = state.microclimate && state.microclimate.seasons ? state.microclimate.seasons[season] : null;
+  return `${meta.label}${seasonMeta ? ` - ${seasonMeta.short}` : ""}`;
+}
+
+function microclimateColorExpression() {
+  const metric = MICRO_METRICS[state.activeMicroMetric] || MICRO_METRICS.sensitivity;
+  const field = microclimateMetricField();
+  const range = microclimateMetricRange(field);
+  const min = Number.isFinite(range.min) ? range.min : 0;
+  const max = Number.isFinite(range.max) && range.max > min ? range.max : min + 1;
+  const colors = metric.palette;
+  return [
+    "case",
+    ["has", field],
+    [
+      "interpolate",
+      ["linear"],
+      ["to-number", ["get", field]],
+      min,
+      colors[0],
+      min + (max - min) * 0.35,
+      colors[1],
+      min + (max - min) * 0.72,
+      colors[2],
+      max,
+      colors[3]
+    ],
+    "rgba(190, 198, 199, 0.22)"
+  ];
+}
+
+function microclimateMetricRange(field) {
+  const features =
+    state.microclimate && state.microclimate.microclimateGeojson
+      ? state.microclimate.microclimateGeojson.features || []
+      : [];
+  const values = features.map((feature) => Number(feature.properties[field])).filter(Number.isFinite);
+  if (!values.length) return { min: 0, max: 1, mean: 0 };
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+    mean: values.reduce((sum, value) => sum + value, 0) / values.length
+  };
+}
+
+function energyMetricField(metric = state.activeEnergyMetric, season = state.activeEnergySeason) {
+  return `${season}_${metric}`;
+}
+
+function energyMetricLabel(metric = state.activeEnergyMetric, season = state.activeEnergySeason) {
+  const metricMeta = ENERGY_METRICS[metric] || ENERGY_METRICS.diff_pct;
+  const seasonMeta = state.energy?.seasons?.[season] || state.microclimate?.seasons?.[season];
+  return `${metricMeta.label}${seasonMeta ? ` - ${seasonMeta.short}` : ""}`;
+}
+
+function energyMetricRange(field) {
+  const features =
+    state.energy && state.energy.energyGridGeojson
+      ? state.energy.energyGridGeojson.features || []
+      : [];
+  const values = features.map((feature) => Number(feature.properties[field])).filter(Number.isFinite);
+  if (!values.length) return { min: 0, max: 1, mean: 0 };
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+    mean: values.reduce((sum, value) => sum + value, 0) / values.length
+  };
+}
+
+function energyColorExpression() {
+  const field = energyMetricField();
+  const range = energyMetricRange(field);
+  const min = Number.isFinite(range.min) ? range.min : 0;
+  const max = Number.isFinite(range.max) && range.max > min ? range.max : min + 1;
+  if (state.activeEnergyMetric === "diff_pct" || state.activeEnergyMetric === "delta_kwh") {
+    const low = Math.min(min, -1);
+    const high = Math.max(max, 1);
+    return [
+      "case",
+      ["has", field],
+      [
+        "interpolate",
+        ["linear"],
+        ["to-number", ["get", field]],
+        low,
+        "#286ca3",
+        0,
+        "#f4f3e9",
+        high,
+        "#bd4a42"
+      ],
+      "rgba(190, 198, 199, 0.18)"
+    ];
+  }
+  return [
+    "case",
+    ["has", field],
+    [
+      "interpolate",
+      ["linear"],
+      ["to-number", ["get", field]],
+      min,
+      "#edf4ef",
+      min + (max - min) * 0.35,
+      "#85b9ad",
+      min + (max - min) * 0.72,
+      "#e0b357",
+      max,
+      "#bd4a42"
+    ],
+    "rgba(190, 198, 199, 0.18)"
+  ];
+}
+
+function ensureEnergyMapLayer() {
+  if (!state.map || !state.energy?.energyGridGeojson) return;
+  const map = state.map;
+  if (!map.getSource("energy-grid")) {
+    map.addSource("energy-grid", {
+      type: "geojson",
+      data: state.energy.energyGridGeojson,
+      generateId: true
+    });
+  }
+  if (!map.getLayer("energy-grid-fill")) {
+    map.addLayer({
+      id: "energy-grid-fill",
+      type: "fill",
+      source: "energy-grid",
+      layout: { visibility: "none" },
+      paint: {
+        "fill-color": energyColorExpression(),
+        "fill-opacity": 0.64
+      }
+    });
+  }
+  if (!map.getLayer("energy-grid-line")) {
+    map.addLayer({
+      id: "energy-grid-line",
+      type: "line",
+      source: "energy-grid",
+      layout: { visibility: "none" },
+      paint: {
+        "line-color": "#ffffff",
+        "line-width": 0.45,
+        "line-opacity": 0.6
+      }
+    });
+  }
+  if (!map.getLayer("energy-grid-selected-line")) {
+    map.addLayer({
+      id: "energy-grid-selected-line",
+      type: "line",
+      source: "energy-grid",
+      layout: { visibility: "none" },
+      filter: ["==", ["get", "grid_id"], -1],
+      paint: {
+        "line-color": "#172126",
+        "line-width": 3,
+        "line-opacity": 0.95
+      }
+    });
+  }
+  if (!state.energyMapEventsBound && map.getLayer("energy-grid-fill")) {
+    map.on("click", "energy-grid-fill", (event) => {
+      const feature = event.features && event.features[0];
+      if (!feature) return;
+      selectEnergyGridFeature(feature, event.lngLat);
+    });
+    map.on("mouseenter", "energy-grid-fill", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", "energy-grid-fill", () => {
+      map.getCanvas().style.cursor = "";
+    });
+    state.energyMapEventsBound = true;
+  }
 }
 
 function configureBuildingToggle() {
@@ -602,6 +1076,8 @@ function updateAllocationForScenario() {
   state.selectedFeature = null;
   state.selectedOpportunity = null;
   state.selectedBuilding = null;
+  state.selectedMicroclimate = null;
+  state.selectedEnergyGrid = null;
   if (state.map && state.map.getSource("allocation")) {
     state.map.getSource("allocation").setData(next);
   }
@@ -618,6 +1094,7 @@ function updateAllocationForScenario() {
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Switch to ${scenarioLabel(state.scenarioId)}.`));
   applyMapFilters();
+  syncEnergyLayer();
 }
 
 function applyMapFilters() {
@@ -643,6 +1120,11 @@ function wirePanels() {
       button.classList.add("active");
       document.querySelectorAll(".panel-section").forEach((panel) => panel.classList.remove("active"));
       document.getElementById(`panel-${state.activePanel}`).classList.add("active");
+      if (state.activePanel === "energy") {
+        ensureEnergyData();
+      }
+      syncMicroclimateLayer();
+      syncEnergyLayer();
     });
   });
 }
@@ -688,6 +1170,8 @@ function wireLayerControls() {
     if (!state.map) return;
     state.map.easeTo({ pitch: 0, bearing: 0, duration: 600 });
   });
+  wireMicroclimateControls();
+  wireEnergyControls();
 }
 
 function setLayerVisibility(layerIds, visible) {
@@ -697,6 +1181,33 @@ function setLayerVisibility(layerIds, visible) {
       state.map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
     }
   });
+}
+
+function syncMicroclimateLayer() {
+  if (!state.map) return;
+  const visible = state.activePanel === "microclimate" && Boolean(state.microclimate);
+  setLayerVisibility(["microclimate-fill", "microclimate-line", "microclimate-selected-line"], visible);
+  if (state.map.getLayer("microclimate-fill")) {
+    state.map.setPaintProperty("microclimate-fill", "fill-color", microclimateColorExpression());
+  }
+  if (visible && state.map.getLayer("microclimate-selected-line")) {
+    const id = state.selectedMicroclimate ? Number(state.selectedMicroclimate.properties.grid_id) : -1;
+    state.map.setFilter("microclimate-selected-line", ["==", ["get", "grid_id"], id]);
+  }
+}
+
+function syncEnergyLayer() {
+  if (!state.map) return;
+  ensureEnergyMapLayer();
+  const visible = state.activePanel === "energy" && state.activeEnergyMode === "grid" && Boolean(state.energy);
+  setLayerVisibility(["energy-grid-fill", "energy-grid-line", "energy-grid-selected-line"], visible);
+  if (state.map.getLayer("energy-grid-fill")) {
+    state.map.setPaintProperty("energy-grid-fill", "fill-color", energyColorExpression());
+  }
+  if (visible && state.map.getLayer("energy-grid-selected-line")) {
+    const id = state.selectedEnergyGrid ? Number(state.selectedEnergyGrid.properties.grid_id) : -1;
+    state.map.setFilter("energy-grid-selected-line", ["==", ["get", "grid_id"], id]);
+  }
 }
 
 function renderOverview() {
@@ -767,6 +1278,454 @@ function renderScenarioNarrative() {
   `;
 }
 
+function wireMicroclimateControls() {
+  const seasonBox = document.getElementById("microSeasonButtons");
+  const metricBox = document.getElementById("microMetricButtons");
+  seasonBox?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-micro-season]");
+    if (!button) return;
+    state.activeMicroSeason = button.dataset.microSeason;
+    renderMicroclimatePanel();
+    syncMicroclimateLayer();
+  });
+  metricBox?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-micro-metric]");
+    if (!button) return;
+    state.activeMicroMetric = button.dataset.microMetric;
+    renderMicroclimatePanel();
+    syncMicroclimateLayer();
+  });
+}
+
+function renderMicroclimatePanel() {
+  const data = state.microclimate;
+  const metricGrid = document.getElementById("microMetricGrid");
+  if (!metricGrid) return;
+  if (!data) {
+    metricGrid.innerHTML = `<div class="metric-card wide"><strong>Not loaded</strong><span>Microclimate data were not available.</span></div>`;
+    ["microSeasonButtons", "microMetricButtons", "microNarrative", "wrfSeriesChart", "lczSensitivityList", "fig10Explorer"].forEach((id) => {
+      const node = document.getElementById(id);
+      if (node) node.innerHTML = "";
+    });
+    return;
+  }
+
+  renderMicroSeasonButtons();
+  renderMicroMetricButtons();
+  renderMicroMetricCards();
+  renderMicroNarrative();
+  renderWrfSeriesChart();
+  renderLczSensitivityList();
+  renderFig10Explorer();
+}
+
+function renderMicroSeasonButtons() {
+  const container = document.getElementById("microSeasonButtons");
+  const seasons = state.microclimate.seasons || {};
+  container.innerHTML = MICRO_SEASONS.map((season) => {
+    const meta = seasons[season] || {};
+    return `<button type="button" class="${season === state.activeMicroSeason ? "active" : ""}" data-micro-season="${season}">${escapeHtml(meta.short || season)}</button>`;
+  }).join("");
+}
+
+function renderMicroMetricButtons() {
+  const container = document.getElementById("microMetricButtons");
+  container.innerHTML = Object.entries(MICRO_METRICS)
+    .map(
+      ([key, metric]) =>
+        `<button type="button" class="${key === state.activeMicroMetric ? "active" : ""}" data-micro-metric="${key}">${escapeHtml(metric.short)}</button>`
+    )
+    .join("");
+}
+
+function renderMicroMetricCards() {
+  const field = microclimateMetricField();
+  const range = microclimateMetricRange(field);
+  const metric = MICRO_METRICS[state.activeMicroMetric] || MICRO_METRICS.sensitivity;
+  const seasonLabel = state.microclimate.seasons[state.activeMicroSeason]?.short || state.activeMicroSeason;
+  const lczRows = microLczRowsForSeason();
+  const topLcz = lczRows[0];
+  const variable = MICRO_METRICS[state.activeMicroMetric]?.kind === "wrf" ? state.activeMicroMetric : "temp";
+  const series = state.microclimate.wrfSeries?.[state.activeMicroSeason]?.[variable];
+
+  document.getElementById("microMetricGrid").innerHTML = [
+    [formatNumber(range.mean, metric.unit === "%" ? 1 : 2), `mean ${metric.unit} (${seasonLabel})`],
+    [formatNumber(range.max, metric.unit === "%" ? 1 : 2), `max ${metric.short.toLowerCase()}`],
+    [topLcz ? `${escapeHtml(topLcz.LCZ_label || topLcz.LCZ_name || topLcz.LCZ_code)}` : "n/a", "highest mean LCZ sensitivity"],
+    [series ? `${formatNumber(series.stats?.mean, 2)} ${metric.unit}` : "n/a", `city mean ${MICRO_METRICS[variable].short.toLowerCase()}`]
+  ]
+    .map(([value, label]) => `<div class="metric-card"><strong>${value}</strong><span>${label}</span></div>`)
+    .join("");
+}
+
+function renderMicroNarrative() {
+  const metric = MICRO_METRICS[state.activeMicroMetric] || MICRO_METRICS.sensitivity;
+  const season = state.microclimate.seasons[state.activeMicroSeason] || {};
+  const field = microclimateMetricField();
+  const range = microclimateMetricRange(field);
+  const lisa = (state.microclimate.lisaSummary || []).find(
+    (row) => String(row.Season).toLowerCase() === state.activeMicroSeason && row.Cluster_Type === "HH"
+  );
+  const node = document.getElementById("microNarrative");
+  node.innerHTML = `
+    <p><strong>${escapeHtml(metric.label)}</strong> is mapped for the ${escapeHtml(season.label || state.activeMicroSeason)}. The layer uses 500 m grid summaries derived from the previous Shanghai microclimate-energy workflow.</p>
+    <p>Current grid range: ${formatNumber(range.min, 2)} to ${formatNumber(range.max, 2)} ${escapeHtml(metric.unit)}. ${lisa ? `LISA HH clusters cover ${formatNumber(lisa.Percent, 1)}% of grids with mean sensitivity ${formatNumber(lisa.Mean_Sensitivity, 1)}%.` : ""}</p>
+  `;
+}
+
+function renderWrfSeriesChart() {
+  const variable = MICRO_METRICS[state.activeMicroMetric]?.kind === "wrf" ? state.activeMicroMetric : "temp";
+  const series = state.microclimate.wrfSeries?.[state.activeMicroSeason]?.[variable];
+  const metric = MICRO_METRICS[variable];
+  const node = document.getElementById("wrfSeriesChart");
+  if (!series || !series.cityMean || !series.cityMean.length) {
+    node.innerHTML = `<p class="narrative">WRF time-series data are not loaded.</p>`;
+    return;
+  }
+  const values = series.cityMean.map(Number).filter(Number.isFinite);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const width = 330;
+  const height = 126;
+  const pad = 14;
+  const points = series.cityMean
+    .map((value, index) => {
+      const x = pad + (index / Math.max(1, series.cityMean.length - 1)) * (width - pad * 2);
+      const y = height - pad - ((Number(value) - min) / Math.max(0.0001, max - min)) * (height - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  node.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${escapeHtml(metric.label)} citywide WRF series">
+      <rect x="0" y="0" width="${width}" height="${height}" rx="8"></rect>
+      <polyline points="${points}"></polyline>
+      <text x="${pad}" y="${height - 5}">${escapeHtml(series.times[0] || "")}</text>
+      <text x="${width - pad}" y="${height - 5}" text-anchor="end">${escapeHtml(series.times[series.times.length - 1] || "")}</text>
+      <text x="${pad}" y="17">${formatNumber(max, 2)} ${escapeHtml(metric.unit)}</text>
+      <text x="${width - pad}" y="17" text-anchor="end">mean ${formatNumber(series.stats?.mean, 2)}</text>
+    </svg>
+  `;
+}
+
+function renderLczSensitivityList() {
+  const rows = microLczRowsForSeason().slice(0, 7);
+  const max = Math.max(...rows.map((row) => Number(row.S_Mean_Weighted || 0)), 1);
+  document.getElementById("lczSensitivityList").innerHTML = rows
+    .map((row) => {
+      const width = (Number(row.S_Mean_Weighted || 0) / max) * 100;
+      return `
+        <div class="micro-row">
+          <span class="micro-row-top"><strong>${escapeHtml(row.LCZ_label || row.LCZ_name || row.LCZ_code)}</strong><em>${formatNumber(row.S_Mean_Weighted, 1)}%</em></span>
+          <span class="rank-track"><span class="rank-fill" style="width:${width}%"></span></span>
+          <span>${escapeHtml(row.LCZ_name || "")} | high-grid share ${formatNumber(Number(row.P_High || 0) * 100, 1)}%</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function renderMicroEnergyEvidence() {
+  const node = document.getElementById("microEnergyEvidence");
+  if (!node) return;
+  const rows = microEnergyRowsForSeason().slice(0, 5);
+  node.innerHTML = rows
+    .map(
+      (row) => `
+        <div class="micro-row">
+          <span class="micro-row-top"><strong>${escapeHtml(row.category)}</strong><em>${formatNumber(row.diff, 1)}%</em></span>
+          <span>TMY ${formatNumber(row.tmy, 1)} Wh/m2 | WRF ${formatNumber(row.wrf, 1)} Wh/m2 | ΔT ${formatNumber(row.deltaT, 2)} C</span>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderFig10Explorer() {
+  const s3 = state.data.scenarioSummary.find((row) => row.scenario_id === "S3_proposed_refined_microclimate_agentic");
+  const opportunityCount = state.data.opportunityGeojson.features.length;
+  const selectedCount = state.data.allocationGeojson.features.length;
+  const node = document.getElementById("fig10Explorer");
+  node.innerHTML = `
+    <div class="fig10-card-grid">
+      <button type="button" data-fig10-action="allocation">
+        <strong>Selected allocation</strong>
+        <span>${formatNumber(selectedCount)} selected grids, ${formatNumber(s3?.selected_buildings)} buildings, ${formatNumber((s3?.annual_carbon_reduction_tco2__cluster_weighted_13_14_25 || 0) / 1000, 1)} ktCO2/yr.</span>
+      </button>
+      <button type="button" data-fig10-action="context">
+        <strong>Spatial context</strong>
+        <span>${formatNumber(opportunityCount)} opportunity grids link LCZ morphology, baseline EUI, and candidate retrofit potential.</span>
+      </button>
+    </div>
+    <figure class="evidence-figure compact-figure">
+      <img src="./assets/figures/fig10_spatial_allocation_map.png" alt="Fig. 10 spatial allocation reference" />
+    </figure>
+  `;
+  node.querySelectorAll("[data-fig10-action]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (button.dataset.fig10Action === "allocation") {
+        state.activePanel = "layers";
+        document.querySelector('[data-panel-target="layers"]')?.click();
+        fitAllocation();
+      } else {
+        state.activeMicroMetric = "sensitivity";
+        renderMicroclimatePanel();
+        syncMicroclimateLayer();
+        fitAllocation();
+      }
+    });
+  });
+}
+
+function microLczRowsForSeason() {
+  return (state.microclimate.lczSensitivitySummary || [])
+    .filter((row) => String(row.Season).toLowerCase() === state.activeMicroSeason)
+    .sort((a, b) => Number(b.S_Mean_Weighted || 0) - Number(a.S_Mean_Weighted || 0));
+}
+
+function microEnergyRowsForSeason() {
+  const seasonMap = { cooling: "Summer", transition: "Spring", heating: "Winter" };
+  const season = seasonMap[state.activeMicroSeason];
+  return (state.microclimate.energySummary || [])
+    .map((row) => ({
+      category: row.Category,
+      tmy: Number(row[`${season}_TMY_Wh_m2`]),
+      wrf: Number(row[`${season}_Climate_Wh_m2`] ?? row[`${season}_WRF_Wh_m2`]),
+      diff: Number(row[`${season}_Diff_%`]),
+      deltaT: Number(row[`${season}_Mean_DeltaT_C`])
+    }))
+    .filter((row) => Number.isFinite(row.diff))
+    .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+}
+
+function wireEnergyControls() {
+  document.getElementById("energyModeButtons")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-energy-mode]");
+    if (!button) return;
+    state.activeEnergyMode = button.dataset.energyMode;
+    ensureEnergyData();
+    renderEnergyPanel();
+    syncEnergyLayer();
+    if (state.activeEnergyMode === "building") focus3DBuildings();
+  });
+  document.getElementById("energySeasonButtons")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-energy-season]");
+    if (!button) return;
+    state.activeEnergySeason = button.dataset.energySeason;
+    renderEnergyPanel();
+    syncEnergyLayer();
+  });
+  document.getElementById("energyMetricButtons")?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-energy-metric]");
+    if (!button) return;
+    state.activeEnergyMetric = button.dataset.energyMetric;
+    renderEnergyPanel();
+    syncEnergyLayer();
+  });
+}
+
+function renderEnergyPanel() {
+  const metricGrid = document.getElementById("energyMetricGrid");
+  if (!metricGrid) return;
+  const clearIds = ["energyModeButtons", "energySeasonButtons", "energyMetricButtons", "energyNarrative", "buildingEnergyEvidence", "energyGridEvidence", "energyTypeList"];
+  if (!state.energy) {
+    const loading = state.energyPromise ? "Loading" : state.energyError ? "Not loaded" : "Ready";
+    metricGrid.innerHTML = `<div class="metric-card wide"><strong>${loading}</strong><span>${state.energyError || "Open Energy to load building-level TMY and WRF evidence."}</span></div>`;
+    clearIds.forEach((id) => {
+      const node = document.getElementById(id);
+      if (node) node.innerHTML = "";
+    });
+    return;
+  }
+
+  renderEnergyModeButtons();
+  renderEnergySeasonButtons();
+  renderEnergyMetricButtons();
+  renderEnergyMetricCards();
+  renderEnergyNarrative();
+  renderBuildingEnergyEvidence();
+  renderEnergyGridEvidence();
+  renderEnergyTypeList();
+}
+
+function renderEnergyModeButtons() {
+  const container = document.getElementById("energyModeButtons");
+  container.innerHTML = Object.entries(ENERGY_MODES)
+    .map(
+      ([key, label]) =>
+        `<button type="button" class="${key === state.activeEnergyMode ? "active" : ""}" data-energy-mode="${key}">${escapeHtml(label)}</button>`
+    )
+    .join("");
+}
+
+function renderEnergySeasonButtons() {
+  const container = document.getElementById("energySeasonButtons");
+  const seasons = state.energy.seasons || {};
+  container.innerHTML = MICRO_SEASONS.map((season) => {
+    const meta = seasons[season] || {};
+    return `<button type="button" class="${season === state.activeEnergySeason ? "active" : ""}" data-energy-season="${season}">${escapeHtml(meta.short || season)}</button>`;
+  }).join("");
+}
+
+function renderEnergyMetricButtons() {
+  const container = document.getElementById("energyMetricButtons");
+  container.innerHTML = Object.entries(ENERGY_METRICS)
+    .map(
+      ([key, metric]) =>
+        `<button type="button" class="${key === state.activeEnergyMetric ? "active" : ""}" data-energy-metric="${key}">${escapeHtml(metric.short)}</button>`
+    )
+    .join("");
+}
+
+function renderEnergyMetricCards() {
+  const field = energyMetricField();
+  const range = energyMetricRange(field);
+  const metric = ENERGY_METRICS[state.activeEnergyMetric] || ENERGY_METRICS.diff_pct;
+  const selectedBuildingEnergy = state.selectedBuilding
+    ? cachedBuildingEnergyRecord(state.selectedBuilding.properties.bldg_id)
+    : null;
+  const selectedGrid = state.selectedEnergyGrid ? state.selectedEnergyGrid.properties : null;
+  const typeTop = energyTypeRowsForSeason()[0];
+  const buildingValue = selectedBuildingEnergy ? energyRecordValue(selectedBuildingEnergy, state.activeEnergyMetric) : null;
+  const gridValue = selectedGrid ? Number(selectedGrid[field]) : null;
+  document.getElementById("energyMetricGrid").innerHTML = [
+    [formatNumber(state.energy.metadata?.building_count, 0), "single-building records"],
+    [formatNumber(state.energy.metadata?.grid_count, 0), "500 m energy grids"],
+    [
+      selectedBuildingEnergy
+        ? energyFormatValue(buildingValue, state.activeEnergyMetric)
+        : selectedGrid
+          ? energyFormatValue(gridValue, state.activeEnergyMetric)
+          : energyFormatValue(range.mean, state.activeEnergyMetric),
+      selectedBuildingEnergy ? "selected building" : selectedGrid ? "selected grid" : `mean ${metric.short}`
+    ],
+    [typeTop ? energyFormatValue(typeTop[`${state.activeEnergySeason}_diff_pct`], "diff_pct") : "n/a", typeTop ? `${typeTop.type_label} type shift` : "type shift"]
+  ]
+    .map(([value, label]) => `<div class="metric-card"><strong>${value}</strong><span>${label}</span></div>`)
+    .join("");
+}
+
+function renderEnergyNarrative() {
+  const metric = ENERGY_METRICS[state.activeEnergyMetric] || ENERGY_METRICS.diff_pct;
+  const season = state.energy.seasons[state.activeEnergySeason] || {};
+  const field = energyMetricField();
+  const range = energyMetricRange(field);
+  const modeText =
+    state.activeEnergyMode === "grid"
+      ? "The map colors 500 m grid aggregates. Click a grid to inspect summed TMY/WRF energy and mean sensitivity."
+      : "Click any 3D building footprint to load its exact representative-week TMY, WRF and percentage-difference record.";
+  document.getElementById("energyNarrative").innerHTML = `
+    <p><strong>${escapeHtml(metric.label)}</strong> is active for the ${escapeHtml(season.label || state.activeEnergySeason)}. ${modeText}</p>
+    <p>Grid range for this metric is ${energyFormatValue(range.min, state.activeEnergyMetric)} to ${energyFormatValue(range.max, state.activeEnergyMetric)}. Positive values indicate higher WRF/microclimate-week energy than TMY.</p>
+  `;
+}
+
+function renderBuildingEnergyEvidence() {
+  const node = document.getElementById("buildingEnergyEvidence");
+  if (!state.selectedBuilding) {
+    node.innerHTML = `<div class="micro-row"><span class="micro-row-top"><strong>No building selected</strong><em>${escapeHtml(ENERGY_MODES.building)}</em></span><span>Switch to high zoom and click a 3D building footprint to load one building's TMY-vs-WRF energy record.</span></div>`;
+    return;
+  }
+  const bldgId = state.selectedBuilding.properties.bldg_id;
+  const record = cachedBuildingEnergyRecord(bldgId);
+  if (!record) {
+    hydrateSelectedBuildingEnergy(bldgId);
+    node.innerHTML = `<div class="micro-row"><span class="micro-row-top"><strong>Building ${escapeHtml(bldgId)}</strong><em>loading</em></span><span>Fetching the matching energy shard for this building id.</span></div>`;
+    return;
+  }
+  node.innerHTML = MICRO_SEASONS.map((season) => {
+    const meta = state.energy.seasons[season] || {};
+    return `
+      <div class="micro-row ${season === state.activeEnergySeason ? "active" : ""}">
+        <span class="micro-row-top"><strong>${escapeHtml(meta.short || season)}</strong><em>${energyFormatValue(record[`${season}_diff_pct`], "diff_pct")}</em></span>
+        <span>TMY ${energyFormatValue(record[`${season}_tmy_kwh`], "tmy_kwh")} | WRF ${energyFormatValue(record[`${season}_wrf_kwh`], "wrf_kwh")}</span>
+        <span>${escapeHtml(record.type_label || state.selectedBuilding.properties.coarse_function || "type n/a")} | Grid ${escapeHtml(record.grid_id || state.selectedBuilding.properties.grid_id || "n/a")} | floor area ${formatNumber(record.floor_area_m2, 0)} m2</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderEnergyGridEvidence() {
+  const node = document.getElementById("energyGridEvidence");
+  const selected = state.selectedEnergyGrid ? state.selectedEnergyGrid.properties : null;
+  if (selected) {
+    node.innerHTML = energyGridRowsHtml([selected], true);
+    return;
+  }
+  const rows = energyGridRowsForMetric().slice(0, 5).map((feature) => feature.properties);
+  node.innerHTML = energyGridRowsHtml(rows, false);
+}
+
+function renderEnergyTypeList() {
+  const rows = energyTypeRowsForSeason().slice(0, 7);
+  const max = Math.max(...rows.map((row) => Math.abs(Number(row[`${state.activeEnergySeason}_diff_pct`] || 0))), 1);
+  document.getElementById("energyTypeList").innerHTML = rows
+    .map((row) => {
+      const value = Number(row[`${state.activeEnergySeason}_diff_pct`] || 0);
+      const width = (Math.abs(value) / max) * 100;
+      return `
+        <div class="micro-row">
+          <span class="micro-row-top"><strong>${escapeHtml(row.type_label)}</strong><em>${energyFormatValue(value, "diff_pct")}</em></span>
+          <span class="rank-track"><span class="rank-fill ${value < 0 ? "cool" : ""}" style="width:${width}%"></span></span>
+          <span>${formatNumber(row.building_count, 0)} buildings | TMY ${energyFormatValue(row[`${state.activeEnergySeason}_tmy_kwh`], "tmy_kwh")} | WRF ${energyFormatValue(row[`${state.activeEnergySeason}_wrf_kwh`], "wrf_kwh")}</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function energyGridRowsHtml(rows, selectedOnly) {
+  if (!rows.length) {
+    return `<div class="micro-row"><span class="micro-row-top"><strong>No grid evidence</strong><em>n/a</em></span><span>Energy grid summaries are not available for the current metric.</span></div>`;
+  }
+  return rows
+    .map((row) => {
+      const field = energyMetricField();
+      return `
+        <div class="micro-row ${selectedOnly ? "active" : ""}">
+          <span class="micro-row-top"><strong>Grid ${escapeHtml(row.grid_id)}</strong><em>${energyFormatValue(row[field], state.activeEnergyMetric)}</em></span>
+          <span>${formatNumber(row.energy_building_count, 0)} buildings | ${escapeHtml(row.LCZ_label || "LCZ n/a")} | floor area ${formatNumber(row.energy_floor_area_m2, 0)} m2</span>
+          <span>TMY ${energyFormatValue(row[`${state.activeEnergySeason}_tmy_kwh`], "tmy_kwh")} | WRF ${energyFormatValue(row[`${state.activeEnergySeason}_wrf_kwh`], "wrf_kwh")} | diff ${energyFormatValue(row[`${state.activeEnergySeason}_diff_pct`], "diff_pct")}</span>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+function energyGridRowsForMetric() {
+  const field = energyMetricField();
+  return (state.energy?.energyGridGeojson?.features || [])
+    .slice()
+    .filter((feature) => Number.isFinite(Number(feature.properties[field])))
+    .sort((a, b) => Math.abs(Number(b.properties[field])) - Math.abs(Number(a.properties[field])));
+}
+
+function energyTypeRowsForSeason() {
+  return (state.energy?.summaryByType || [])
+    .slice()
+    .sort(
+      (a, b) =>
+        Math.abs(Number(b[`${state.activeEnergySeason}_diff_pct`] || 0)) -
+        Math.abs(Number(a[`${state.activeEnergySeason}_diff_pct`] || 0))
+    );
+}
+
+function energyRecordValue(record, metric = state.activeEnergyMetric, season = state.activeEnergySeason) {
+  if (!record) return null;
+  if (metric === "delta_kwh") {
+    const wrf = Number(record[`${season}_wrf_kwh`]);
+    const tmy = Number(record[`${season}_tmy_kwh`]);
+    return Number.isFinite(wrf) && Number.isFinite(tmy) ? wrf - tmy : null;
+  }
+  return record[`${season}_${metric}`];
+}
+
+function energyFormatValue(value, metric = state.activeEnergyMetric) {
+  const meta = ENERGY_METRICS[metric] || ENERGY_METRICS.diff_pct;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "n/a";
+  return `${formatNumber(number, meta.decimals)}${meta.unit === "%" ? "%" : ` ${meta.unit}`}`;
+}
+
 function renderEvidence() {
   renderModelBenchmark();
   renderArchetypeExplorer();
@@ -779,11 +1738,12 @@ function renderAgentWorkbench() {
   if (!container) return;
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
   const opportunity = state.selectedOpportunity ? state.selectedOpportunity.properties : null;
+  const energyGrid = state.selectedEnergyGrid ? state.selectedEnergyGrid.properties : null;
   const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
 
   container.innerHTML = Object.entries(AGENTS)
     .map(([key, agent]) => {
-      const status = agentStatus(key, selected || opportunity, building);
+      const status = agentStatus(key, selected || opportunity || energyGrid, building);
       return `
         <button class="agent-card ${state.activeAgent === key ? "active" : ""}" type="button" data-agent-key="${key}" style="--agent-color:${agent.color}">
           <span class="agent-card-top">
@@ -809,6 +1769,8 @@ function agentStatus(key, selected, building) {
   if (key === "data" && building) return "building linked";
   if (key === "data" && selected) return "grid linked";
   if (key === "knowledge") return selected || building ? "evidence ready" : "library ready";
+  if (selected?.energy_building_count && key === "scenario") return "energy evidence";
+  if (selected?.energy_building_count && key === "optimization") return "evidence only";
   if (key === "scenario") return selected ? "candidates bound" : "awaiting grid";
   if (key === "optimization") return selected ? "portfolio selected" : "scenario ready";
   if (key === "critic") return selected || building ? "audit ready" : "standing by";
@@ -818,17 +1780,18 @@ function agentStatus(key, selected, building) {
 function buildAgentTrace(prompt) {
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
   const opportunity = state.selectedOpportunity ? state.selectedOpportunity.properties : null;
+  const energyGrid = state.selectedEnergyGrid ? state.selectedEnergyGrid.properties : null;
   const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
   const scenario = state.data
     ? state.data.scenarioSummary.find((row) => row.scenario_id === state.scenarioId)
     : null;
-  const gridContext = selected || opportunity;
+  const gridContext = selected || opportunity || energyGrid;
 
   return [
     buildDataAgentStep(prompt, gridContext, building),
     buildKnowledgeAgentStep(gridContext, building),
     buildScenarioAgentStep(gridContext, building),
-    buildOptimizationAgentStep(selected, scenario),
+    buildOptimizationAgentStep(gridContext, scenario),
     buildCriticAgentStep(gridContext, building)
   ];
 }
@@ -838,7 +1801,9 @@ function buildDataAgentStep(prompt, selected, building) {
   const text = building
     ? `Selected building ${building.bldg_id} is ${building.coarse_function || "unknown function"}, ${building.age_bin || "unknown vintage"}, grid ${building.grid_id || "n/a"}.`
     : selected
-      ? `Grid ${selected.grid_id} contains ${formatNumber(selected.n_buildings || selected.selected_buildings)} buildings, LCZ ${selected.LCZ_mode || "n/a"}, and ${formatNumber(selected.floor_area_m2, 0)} m2 floor area proxy.`
+      ? selected.energy_building_count
+        ? `Energy grid ${selected.grid_id} contains ${formatNumber(selected.energy_building_count, 0)} buildings; active WRF-vs-TMY shift is ${energyFormatValue(selected[energyMetricField()], state.activeEnergyMetric)}.`
+        : `Grid ${selected.grid_id} contains ${formatNumber(selected.n_buildings || selected.selected_buildings)} buildings, LCZ ${selected.LCZ_mode || "n/a"}, and ${formatNumber(selected.floor_area_m2, 0)} m2 floor area proxy.`
       : `Shanghai stock contains ${formatNumber(metrics.building_count_in_units)} buildings compressed into ${formatNumber(metrics.optimization_units)} semantic decision units.`;
   return agentStepObject("data", "load_semantic_stock", text, prompt);
 }
@@ -847,14 +1812,18 @@ function buildKnowledgeAgentStep(selected, building) {
   const strategyId = selected && (selected.strategy_id || selected.recommended_strategy_id);
   const strategy = strategyId ? strategyLabel(strategyId) : "formal intervention library";
   const text = selected
-    ? `${strategy} is checked against function-vintage applicability and evidence-coded retrofit rules.`
+    ? selected.energy_building_count
+      ? `TMY and WRF representative-week energy records are treated as evidence for sensitivity interpretation and discussion.`
+      : `${strategy} is checked against function-vintage applicability and evidence-coded retrofit rules.`
     : `The library holds RAG-grounded retrofit families, costs, applicability and comfort-risk notes.`;
   return agentStepObject("knowledge", "retrieve_policy_constraints", text);
 }
 
 function buildScenarioAgentStep(selected, building) {
   const text = selected
-    ? selected.strategy_id
+    ? selected.energy_building_count
+      ? `The Energy view is evidence-only: ${formatNumber(selected.energy_building_count, 0)} building records are aggregated here for TMY-vs-WRF analysis.`
+      : selected.strategy_id
       ? `${formatNumber(selected.candidate_units || selected.selected_units)} candidate units were screened in this grid; selected strategy is ${strategyLabel(selected.strategy_id)}.`
       : `${formatNumber(selected.candidate_units)} candidate units were screened in this grid; leading candidate is ${opportunityRecommendationLabel(selected)}.`
     : building
@@ -866,6 +1835,8 @@ function buildScenarioAgentStep(selected, building) {
 function buildOptimizationAgentStep(selected, scenario) {
   const text = selected && selected.strategy_id
     ? `NSGA-II selected ${formatNumber(selected.selected_units)} units and ${formatNumber(selected.selected_buildings)} buildings here for ${formatNumber(selected.annual_carbon_reduction_tco2, 1)} tCO2/yr.`
+    : selected && selected.energy_building_count
+      ? `The selected Energy grid is not an optimization decision. It provides ${state.energy?.seasons?.[state.activeEnergySeason]?.short || state.activeEnergySeason} demand sensitivity evidence for the portfolio discussion.`
     : selected
       ? `This grid remains in the full-city opportunity layer. It is available for candidate reasoning but is not part of the current budget-constrained NSGA-II selection.`
     : scenario
@@ -877,6 +1848,8 @@ function buildOptimizationAgentStep(selected, scenario) {
 function buildCriticAgentStep(selected, building) {
   const text = selected && selected.strategy_id
     ? criticText(selected, null)
+    : selected && selected.energy_building_count
+      ? `Energy evidence is separated from the retrofit decision layer. Critic checks whether WRF-vs-TMY shifts are interpreted as sensitivity evidence rather than direct retrofit prescriptions.`
     : selected
       ? opportunityCriticText(selected)
     : building
@@ -933,12 +1906,13 @@ function renderAgentRunState(steps) {
 
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
   const opportunity = state.selectedOpportunity ? state.selectedOpportunity.properties : null;
+  const energyGrid = state.selectedEnergyGrid ? state.selectedEnergyGrid.properties : null;
   const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
   const scenario = state.data
     ? state.data.scenarioSummary.find((row) => row.scenario_id === state.scenarioId)
     : null;
   const prompt = steps.find((step) => step.prompt)?.prompt || "Portfolio inspection";
-  const gridContext = selected || opportunity;
+  const gridContext = selected || opportunity || energyGrid;
   const guardrailRows = buildGuardrailRows(gridContext, building, scenario);
   const riskCount = guardrailRows.filter((row) => row.kind === "risk").length;
   const warnCount = guardrailRows.filter((row) => row.kind === "warn").length;
@@ -1000,6 +1974,7 @@ function renderAgentRunState(steps) {
 
 function runTargetLabel(selected, building) {
   if (building) return `Building ${building.bldg_id || "n/a"}`;
+  if (selected && selected.energy_building_count) return `Energy grid ${selected.grid_id}`;
   if (selected && !selected.strategy_id && selected.opportunity_status) return `Opportunity grid ${selected.grid_id}`;
   if (selected) return `Grid ${selected.grid_id}`;
   return "Shanghai portfolio";
@@ -1023,6 +1998,8 @@ function buildEvidenceRows(prompt, selected, building, scenario) {
       label: "Decision evidence",
       value: selected && selected.strategy_id
         ? `${examples.length} unit examples linked`
+        : selected && selected.energy_building_count
+          ? `${formatNumber(selected.energy_building_count, 0)} building energy records`
         : selected
           ? `${formatNumber(selected.candidate_units)} candidate units screened`
           : "scenario-level metrics",
@@ -1036,6 +2013,8 @@ function buildEvidenceRows(prompt, selected, building, scenario) {
       label: "Building semantics",
       value: building
         ? `${building.coarse_function || "function n/a"} | ${building.thermal_template || "template n/a"}`
+        : selected && selected.energy_building_count
+          ? `${energyMetricLabel()} evidence layer`
         : selected && !selected.strategy_id
           ? opportunityRecommendationLabel(selected)
           : "grid aggregation"
@@ -1064,6 +2043,8 @@ function buildGuardrailRows(selected, building, scenario) {
     label: building ? "Semantic confidence" : selected && !selected.strategy_id ? "Recommended candidate" : "Semantic confidence",
     value: Number.isFinite(confidence)
       ? `${formatNumber(confidence, 2)} LLM score`
+      : selected && selected.energy_building_count
+        ? energyFormatValue(selected[energyMetricField()], state.activeEnergyMetric)
       : selected && !selected.strategy_id
         ? opportunityRecommendationLabel(selected)
         : "unit mean tracked",
@@ -1075,6 +2056,8 @@ function buildGuardrailRows(selected, building, scenario) {
     label: "Evidence coverage",
     value: selected && selected.strategy_id
       ? `${examples.length} selected units`
+      : selected && selected.energy_building_count
+        ? `${formatNumber(selected.energy_building_count, 0)} building records`
       : selected
         ? `${formatNumber(selected.candidate_units)} candidate units`
         : "portfolio summary",
@@ -1101,6 +2084,8 @@ function highlightAgentHotspots(kind = "selected") {
     ids = [Number(state.selectedFeature.properties.grid_id)];
   } else if (state.selectedOpportunity) {
     ids = [Number(state.selectedOpportunity.properties.grid_id)];
+  } else if (state.selectedEnergyGrid) {
+    ids = [Number(state.selectedEnergyGrid.properties.grid_id)];
   }
   state.map.setFilter("agent-highlight-fill", ["in", ["get", "grid_id"], ["literal", ids]]);
 }
@@ -1356,6 +2341,8 @@ function renderLegend() {
 function selectFeature(feature, lngLat) {
   state.selectedBuilding = null;
   state.selectedOpportunity = null;
+  state.selectedMicroclimate = null;
+  state.selectedEnergyGrid = null;
   state.selectedFeature = feature;
   const p = feature.properties;
 
@@ -1369,6 +2356,9 @@ function selectFeature(feature, lngLat) {
   }
   if (state.map && state.map.getLayer("opportunity-selected-line")) {
     state.map.setFilter("opportunity-selected-line", ["==", ["get", "grid_id"], -1]);
+  }
+  if (state.map && state.map.getLayer("energy-grid-selected-line")) {
+    state.map.setFilter("energy-grid-selected-line", ["==", ["get", "grid_id"], -1]);
   }
 
   if (state.popup) state.popup.remove();
@@ -1392,6 +2382,8 @@ function selectFeature(feature, lngLat) {
 function selectOpportunityFeature(feature, lngLat) {
   state.selectedBuilding = null;
   state.selectedFeature = null;
+  state.selectedMicroclimate = null;
+  state.selectedEnergyGrid = null;
   state.selectedOpportunity = feature;
   const p = feature.properties;
   const gridId = Number(p.grid_id);
@@ -1410,6 +2402,9 @@ function selectOpportunityFeature(feature, lngLat) {
       ["get", "grid_id"],
       Number.isFinite(gridId) ? gridId : -1
     ]);
+  }
+  if (state.map && state.map.getLayer("energy-grid-selected-line")) {
+    state.map.setFilter("energy-grid-selected-line", ["==", ["get", "grid_id"], -1]);
   }
 
   if (state.popup) state.popup.remove();
@@ -1437,6 +2432,8 @@ function selectBuildingFeature(feature, lngLat) {
   };
   state.selectedBuilding = normalizedFeature;
   state.selectedOpportunity = null;
+  state.selectedMicroclimate = null;
+  state.selectedEnergyGrid = null;
   const p = normalizedFeature.properties;
   const gridId = Number(p.grid_id);
   const gridFeature = state.data.allocationGeojson.features.find(
@@ -1458,6 +2455,9 @@ function selectBuildingFeature(feature, lngLat) {
       Number.isFinite(gridId) ? gridId : -1
     ]);
   }
+  if (state.map && state.map.getLayer("energy-grid-selected-line")) {
+    state.map.setFilter("energy-grid-selected-line", ["==", ["get", "grid_id"], -1]);
+  }
 
   if (state.popup) state.popup.remove();
   if (state.map && lngLat) {
@@ -1472,9 +2472,102 @@ function selectBuildingFeature(feature, lngLat) {
   }
 
   renderSelectedBuilding();
+  hydrateSelectedBuildingEnergy(p.bldg_id);
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Inspect selected building ${p.bldg_id}.`));
   highlightAgentHotspots("selected");
+}
+
+function selectMicroclimateFeature(feature, lngLat) {
+  state.selectedMicroclimate = feature;
+  state.selectedBuilding = null;
+  state.selectedFeature = null;
+  state.selectedOpportunity = null;
+  state.selectedEnergyGrid = null;
+  const p = feature.properties;
+  const gridId = Number(p.grid_id);
+
+  clearBuildingSelection();
+  if (state.map && state.map.getLayer("allocation-selected-line")) {
+    state.map.setFilter("allocation-selected-line", ["==", ["get", "grid_id"], -1]);
+  }
+  if (state.map && state.map.getLayer("opportunity-selected-line")) {
+    state.map.setFilter("opportunity-selected-line", ["==", ["get", "grid_id"], -1]);
+  }
+  if (state.map && state.map.getLayer("microclimate-selected-line")) {
+    state.map.setFilter("microclimate-selected-line", [
+      "==",
+      ["get", "grid_id"],
+      Number.isFinite(gridId) ? gridId : -1
+    ]);
+  }
+  if (state.map && state.map.getLayer("energy-grid-selected-line")) {
+    state.map.setFilter("energy-grid-selected-line", ["==", ["get", "grid_id"], -1]);
+  }
+
+  if (state.popup) state.popup.remove();
+  if (state.map && lngLat) {
+    const field = microclimateMetricField();
+    const metric = MICRO_METRICS[state.activeMicroMetric] || MICRO_METRICS.sensitivity;
+    state.popup = new mapboxgl.Popup({ closeButton: false, maxWidth: "300px" })
+      .setLngLat(lngLat)
+      .setHTML(`
+        <div class="popup-title">Microclimate grid ${p.grid_id}</div>
+        <div class="popup-line">${microclimateMetricLabel()}: ${formatNumber(p[field], 2)} ${metric.unit}</div>
+        <div class="popup-line">${p.LCZ_label || "LCZ n/a"} | ${formatNumber(p.n_buildings)} buildings</div>
+      `)
+      .addTo(state.map);
+  }
+
+  renderSelectedMicroclimate();
+  renderAgentWorkbench();
+  renderAgentTrace(buildAgentTrace(`Inspect microclimate grid ${p.grid_id}.`));
+}
+
+function selectEnergyGridFeature(feature, lngLat) {
+  state.selectedEnergyGrid = feature;
+  state.selectedMicroclimate = null;
+  state.selectedBuilding = null;
+  state.selectedFeature = null;
+  state.selectedOpportunity = null;
+  const p = feature.properties;
+  const gridId = Number(p.grid_id);
+
+  clearBuildingSelection();
+  if (state.map && state.map.getLayer("allocation-selected-line")) {
+    state.map.setFilter("allocation-selected-line", ["==", ["get", "grid_id"], -1]);
+  }
+  if (state.map && state.map.getLayer("opportunity-selected-line")) {
+    state.map.setFilter("opportunity-selected-line", ["==", ["get", "grid_id"], -1]);
+  }
+  if (state.map && state.map.getLayer("microclimate-selected-line")) {
+    state.map.setFilter("microclimate-selected-line", ["==", ["get", "grid_id"], -1]);
+  }
+  if (state.map && state.map.getLayer("energy-grid-selected-line")) {
+    state.map.setFilter("energy-grid-selected-line", [
+      "==",
+      ["get", "grid_id"],
+      Number.isFinite(gridId) ? gridId : -1
+    ]);
+  }
+
+  if (state.popup) state.popup.remove();
+  if (state.map && lngLat) {
+    const field = energyMetricField();
+    state.popup = new mapboxgl.Popup({ closeButton: false, maxWidth: "310px" })
+      .setLngLat(lngLat)
+      .setHTML(`
+        <div class="popup-title">Energy grid ${p.grid_id}</div>
+        <div class="popup-line">${energyMetricLabel()}: ${energyFormatValue(p[field], state.activeEnergyMetric)}</div>
+        <div class="popup-line">${formatNumber(p.energy_building_count, 0)} buildings | ${p.LCZ_label || "LCZ n/a"}</div>
+      `)
+      .addTo(state.map);
+  }
+
+  renderSelectedEnergyGrid();
+  renderEnergyPanel();
+  renderAgentWorkbench();
+  renderAgentTrace(buildAgentTrace(`Inspect energy grid ${p.grid_id}.`));
 }
 
 function clearBuildingSelection() {
@@ -1505,11 +2598,96 @@ function normalizeBuildingProperties(raw) {
 }
 
 function renderEmptySelection() {
+  state.selectedMicroclimate = null;
   document.getElementById("selectedSummary").innerHTML = `
-    <p class="narrative">Click a selected allocation grid, a full-city opportunity grid, or a 3D building. The critic agent panel will switch between selected portfolio evidence, candidate-grid recommendation, and building-level semantic evidence.</p>
+    <p class="narrative">Click a selected allocation grid, a full-city opportunity grid, a 3D building, a microclimate 500 m grid, or an energy 500 m grid. The critic agent panel will switch between portfolio, candidate, building-level, WRF/LCZ, and TMY-vs-WRF energy evidence.</p>
   `;
   document.getElementById("agentSteps").innerHTML = "";
   document.getElementById("unitExamples").innerHTML = "";
+}
+
+function renderSelectedMicroclimate() {
+  const p = state.selectedMicroclimate.properties;
+  const season = state.activeMicroSeason;
+  document.getElementById("selectedTitle").textContent = `Microclimate grid ${p.grid_id}`;
+  document.getElementById("selectedSummary").innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-tile"><strong>${formatNumber(p[`sensitivity_${season}_pct`], 1)}%</strong><span>LCZ sensitivity</span></div>
+      <div class="summary-tile"><strong>${formatNumber(p[`wrf_${season}_temp_mean`], 1)} C</strong><span>WRF mean T2</span></div>
+      <div class="summary-tile"><strong>${formatNumber(p[`wrf_${season}_rh_mean`], 1)}%</strong><span>WRF mean RH</span></div>
+      <div class="summary-tile"><strong>${formatNumber(p[`wrf_${season}_solar_mean`], 1)}</strong><span>mean W/m2</span></div>
+      <div class="summary-tile"><strong>${formatNumber(p[`wrf_${season}_wind_mean`], 2)}</strong><span>mean m/s</span></div>
+      <div class="summary-tile"><strong>${p.LCZ_label || p.lcz_mode || "LCZ"}</strong><span>dominant LCZ</span></div>
+    </div>
+  `;
+  document.getElementById("agentSteps").innerHTML = `
+    <div class="agent-step">
+      <h3>Data Agent: WRF grid evidence</h3>
+      <p>This 500 m cell is read from representative-week WRF summaries and joined to the Shanghai opportunity grid geometry.</p>
+    </div>
+    <div class="agent-step">
+      <h3>Knowledge Agent: LCZ sensitivity</h3>
+      <p>Seasonal sensitivity is ${formatNumber(p[`sensitivity_${season}_pct`], 1)}%, with dominant ${p.LCZ_label || "LCZ n/a"} and purity ${formatNumber(p.LCZ_purity, 1)}%.</p>
+    </div>
+    <div class="agent-step warning">
+      <h3>Critic Agent: interpretation boundary</h3>
+      <p>This layer explains microclimate exposure and energy sensitivity. It is evidence for the retrofit optimizer, not itself a selected portfolio decision.</p>
+    </div>
+  `;
+  document.getElementById("unitExamples").innerHTML = `
+    <div class="section-title">Representative-week fields</div>
+    <div class="unit-card">
+      <p>${microclimateMetricLabel()} currently colors the map. Ask OptAgent to compare this grid with the selected retrofit allocation or explain the WRF-to-energy pathway.</p>
+      <div class="tag-row">
+        <span class="tag">Grid ${p.grid_id}</span>
+        <span class="tag">${state.microclimate.seasons[season]?.short || season}</span>
+        <span class="tag">${p.LCZ_label || "LCZ n/a"}</span>
+        <span class="tag">${formatNumber(p.n_buildings)} buildings</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderSelectedEnergyGrid() {
+  const p = state.selectedEnergyGrid.properties;
+  const season = state.activeEnergySeason;
+  document.getElementById("selectedTitle").textContent = `Energy grid ${p.grid_id}`;
+  document.getElementById("selectedSummary").innerHTML = `
+    <div class="summary-grid">
+      <div class="summary-tile"><strong>${energyFormatValue(p[`${season}_diff_pct`], "diff_pct")}</strong><span>WRF-vs-TMY difference</span></div>
+      <div class="summary-tile"><strong>${energyFormatValue(p[`${season}_tmy_kwh`], "tmy_kwh")}</strong><span>TMY week energy</span></div>
+      <div class="summary-tile"><strong>${energyFormatValue(p[`${season}_wrf_kwh`], "wrf_kwh")}</strong><span>WRF week energy</span></div>
+      <div class="summary-tile"><strong>${energyFormatValue(p[`${season}_delta_kwh`], "delta_kwh")}</strong><span>absolute shift</span></div>
+      <div class="summary-tile"><strong>${formatNumber(p.energy_building_count, 0)}</strong><span>buildings</span></div>
+      <div class="summary-tile"><strong>${p.LCZ_label || "LCZ"}</strong><span>dominant LCZ</span></div>
+    </div>
+  `;
+  document.getElementById("agentSteps").innerHTML = `
+    <div class="agent-step">
+      <h3>Data Agent: energy aggregation</h3>
+      <p>This 500 m grid sums single-building representative-week TMY and WRF/microclimate energy records, then derives the percentage shift.</p>
+    </div>
+    <div class="agent-step">
+      <h3>Knowledge Agent: weather pathway</h3>
+      <p>${state.energy.seasons[season]?.short || season} WRF energy is ${energyFormatValue(p[`${season}_wrf_kwh`], "wrf_kwh")} compared with ${energyFormatValue(p[`${season}_tmy_kwh`], "tmy_kwh")} under TMY.</p>
+    </div>
+    <div class="agent-step ${Math.abs(Number(p[`${season}_diff_pct`] || 0)) > 10 ? "warning" : ""}">
+      <h3>Critic Agent: interpretation boundary</h3>
+      <p>Use this layer to explain microclimate-energy sensitivity. It does not replace the NSGA-II retrofit allocation; it supplies evidence that the optimization and discussion can reference.</p>
+    </div>
+  `;
+  document.getElementById("unitExamples").innerHTML = `
+    <div class="section-title">Energy evidence</div>
+    <div class="unit-card">
+      <p>${energyMetricLabel()} currently colors the Energy grid layer. Switch to building mode and click a 3D footprint for exact single-building records.</p>
+      <div class="tag-row">
+        <span class="tag">Grid ${p.grid_id}</span>
+        <span class="tag">${state.energy.seasons[season]?.short || season}</span>
+        <span class="tag">${formatNumber(p.energy_building_count, 0)} buildings</span>
+        <span class="tag">${energyFormatValue(p[`${season}_diff_pct`], "diff_pct")}</span>
+      </div>
+    </div>
+  `;
 }
 
 function renderSelected() {
@@ -1598,6 +2776,17 @@ function opportunityRecommendationText(p) {
 function renderSelectedBuilding() {
   const p = state.selectedBuilding.properties;
   const grid = state.selectedFeature ? state.selectedFeature.properties : null;
+  const energy = cachedBuildingEnergyRecord(p.bldg_id);
+  const season = state.activeEnergySeason;
+  const energyTiles = energy
+    ? `
+      <div class="summary-tile"><strong>${energyFormatValue(energy[`${season}_diff_pct`], "diff_pct")}</strong><span>${state.energy?.seasons?.[season]?.short || season} WRF-vs-TMY</span></div>
+      <div class="summary-tile"><strong>${energyFormatValue(energy[`${season}_tmy_kwh`], "tmy_kwh")}</strong><span>TMY week energy</span></div>
+      <div class="summary-tile"><strong>${energyFormatValue(energy[`${season}_wrf_kwh`], "wrf_kwh")}</strong><span>WRF week energy</span></div>
+    `
+    : state.energyPromise || state.energy
+      ? `<div class="summary-tile"><strong>Loading</strong><span>building energy shard</span></div>`
+      : "";
   document.getElementById("selectedTitle").textContent = `Building ${p.bldg_id || "unknown"}`;
   document.getElementById("selectedSummary").innerHTML = `
     <div class="summary-grid">
@@ -1607,6 +2796,7 @@ function renderSelectedBuilding() {
       <div class="summary-tile"><strong>${formatNumber(p.llm_confidence, 2)}</strong><span>LLM confidence</span></div>
       <div class="summary-tile"><strong>${formatNumber(p.height_m, 1)} m</strong><span>height</span></div>
       <div class="summary-tile"><strong>${formatNumber(p.footprint_m2, 0)} m2</strong><span>footprint</span></div>
+      ${energyTiles}
     </div>
   `;
 
@@ -1617,7 +2807,7 @@ function renderSelectedBuilding() {
   document.getElementById("agentSteps").innerHTML = `
     <div class="agent-step">
       <h3>Data Agent: building semantics</h3>
-      <p>${p.fine_function || p.coarse_function || "Unknown refined function"}; source function ${p.coarse_function || "n/a"}; vintage ${p.age_bin || "n/a"}.</p>
+      <p>${p.fine_function || p.coarse_function || "Unknown refined function"}; source function ${p.coarse_function || "n/a"}; vintage ${p.age_bin || "n/a"}.${energy ? ` ${state.energy?.seasons?.[season]?.short || season} energy shift is ${energyFormatValue(energy[`${season}_diff_pct`], "diff_pct")}.` : ""}</p>
     </div>
     <div class="agent-step">
       <h3>Decision-unit linkage</h3>
@@ -1632,11 +2822,12 @@ function renderSelectedBuilding() {
   document.getElementById("unitExamples").innerHTML = `
     <div class="section-title">Semantic reasoning</div>
     <div class="unit-card">
-      <p>${p.fine_function || p.coarse_function || "This building"} is bound to a semantic decision unit through grid, refined function, vintage and thermal template. The web tileset keeps compact fields for click performance; detailed POI reasoning remains in the source CSV.</p>
+      <p>${p.fine_function || p.coarse_function || "This building"} is bound to a semantic decision unit through grid, refined function, vintage and thermal template. ${energy ? `The Energy shard adds exact representative-week TMY ${energyFormatValue(energy[`${season}_tmy_kwh`], "tmy_kwh")} and WRF ${energyFormatValue(energy[`${season}_wrf_kwh`], "wrf_kwh")}.` : "The Energy shard will add exact representative-week values after it loads."}</p>
       <div class="tag-row">
         <span class="tag">Grid ${p.grid_id || "n/a"}</span>
         <span class="tag">${p.thermal_template || "template n/a"}</span>
         <span class="tag">${formatNumber(p.llm_confidence, 2)} confidence</span>
+        ${energy ? `<span class="tag">${energyFormatValue(energy[`${season}_diff_pct`], "diff_pct")}</span>` : ""}
       </div>
     </div>
   `;
@@ -1762,7 +2953,7 @@ function focus3DBuildings() {
   if (!state.map) return;
   const target = state.selectedBuilding
     ? [Number(state.selectedBuilding.properties.center_lon), Number(state.selectedBuilding.properties.center_lat)]
-    : featureCenter(state.selectedFeature || state.selectedOpportunity) || [121.4737, 31.2304];
+    : featureCenter(state.selectedFeature || state.selectedOpportunity || state.selectedEnergyGrid) || [121.4737, 31.2304];
   state.map.easeTo({
     center: target.every(Number.isFinite) ? target : [121.4737, 31.2304],
     zoom: Math.max(state.map.getZoom(), 14.2),
@@ -1781,19 +2972,26 @@ function updateBuildingStatus() {
     node.textContent = "3D buildings disabled";
     return;
   }
+  if (state.buildingLayerError) {
+    node.textContent = "3D buildings tileset error";
+    node.title = state.buildingLayerError;
+    return;
+  }
   if (!state.map.getLayer("building-fill")) {
-    node.textContent = "3D buildings layer not loaded";
+    node.textContent = state.map.loaded() ? "3D buildings source pending" : "3D buildings loading";
     return;
   }
   const minzoom = cfg.minzoom || 11;
   if (state.map.getZoom() < minzoom) {
-    node.textContent = `3D buildings visible after z${formatNumber(minzoom, 1)}`;
+    node.textContent = `Zoom to z${formatNumber(minzoom, 1)} for 3D buildings`;
+    node.title = "The layer is loaded; building extrusions are hidden below the configured minimum zoom.";
     return;
   }
   const features = state.map.queryRenderedFeatures({ layers: ["building-fill"] });
+  node.title = "";
   node.textContent = features.length
     ? `3D buildings: ${formatNumber(features.length)} visible`
-    : "3D buildings: no features in view";
+    : "3D buildings ready; move over Shanghai";
 }
 
 function fitAllocation() {
@@ -1803,7 +3001,7 @@ function fitAllocation() {
 }
 
 function zoomSelected() {
-  const feature = state.selectedFeature || state.selectedOpportunity;
+  const feature = state.selectedFeature || state.selectedOpportunity || state.selectedEnergyGrid || state.selectedMicroclimate;
   if (state.selectedBuilding) {
     focus3DBuildings();
     return;
@@ -2017,8 +3215,12 @@ function buildContextPrompt() {
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
   const opportunity = state.selectedOpportunity ? state.selectedOpportunity.properties : null;
   const building = state.selectedBuilding ? state.selectedBuilding.properties : null;
+  const microclimate = state.selectedMicroclimate ? state.selectedMicroclimate.properties : null;
+  const energyGrid = state.selectedEnergyGrid ? state.selectedEnergyGrid.properties : null;
+  const buildingEnergy = building ? cachedBuildingEnergyRecord(building.bldg_id) : null;
   const scenario = state.data.scenarioSummary.find((row) => row.scenario_id === state.scenarioId);
   const trace = state.lastAgentSteps || buildAgentTrace("Current agent run");
+  const gridContext = selected || opportunity || energyGrid;
   return JSON.stringify(
     {
       coreMetrics: metrics,
@@ -2026,6 +3228,31 @@ function buildContextPrompt() {
       selectedBuilding: building,
       selectedGrid: selected,
       selectedOpportunityGrid: opportunity,
+      selectedMicroclimateGrid: microclimate,
+      selectedEnergyGrid: energyGrid,
+      selectedBuildingEnergy: buildingEnergy,
+      activeMicroclimateView: state.microclimate
+        ? {
+            season: state.activeMicroSeason,
+            metric: state.activeMicroMetric,
+            metricLabel: microclimateMetricLabel(),
+            lczTopRows: microLczRowsForSeason().slice(0, 5),
+            wrfSeriesStats:
+              state.microclimate.wrfSeries?.[state.activeMicroSeason]?.[
+                MICRO_METRICS[state.activeMicroMetric]?.kind === "wrf" ? state.activeMicroMetric : "temp"
+              ]?.stats || null
+          }
+        : null,
+      activeEnergyView: state.energy
+        ? {
+            mode: state.activeEnergyMode,
+            season: state.activeEnergySeason,
+            metric: state.activeEnergyMetric,
+            metricLabel: energyMetricLabel(),
+            topGridRows: energyGridRowsForMetric().slice(0, 5).map((feature) => feature.properties),
+            topTypeRows: energyTypeRowsForSeason().slice(0, 5)
+          }
+        : null,
       selectedUnits: selected ? state.data.unitExamplesByGrid[String(selected.grid_id)] || [] : [],
       agentTrace: trace.map((step) => ({
         agent: step.agent,
@@ -2034,8 +3261,8 @@ function buildContextPrompt() {
         text: step.text,
         riskState: step.kind || "normal"
       })),
-      guardrails: buildGuardrailRows(selected, building, scenario),
-      evidenceLineage: buildEvidenceRows("Current user question", selected, building, scenario)
+      guardrails: buildGuardrailRows(gridContext, building, scenario),
+      evidenceLineage: buildEvidenceRows("Current user question", gridContext, building, scenario)
     },
     null,
     2
@@ -2051,8 +3278,51 @@ function localAgentAnswer(message) {
   const asksWhy = hasAny(text, raw, ["why", "select", "not selected", "\u4e3a\u4ec0\u4e48", "\u4e3a\u4f55", "\u6ca1\u9009", "\u9009\u62e9", "\u5165\u9009"]);
   const asksRisk = hasAny(text, raw, ["risk", "critic", "audit", "\u98ce\u9669", "\u5ba1\u6838"]);
   const asksMicroclimate = hasAny(text, raw, ["lcz", "microclimate", "\u5fae\u6c14\u5019"]);
+  const asksEnergy = hasAny(text, raw, ["energy", "tmy", "eui", "\u80fd\u8017", "\u80fd\u6e90"]);
   const asksBudget = hasAny(text, raw, ["budget", "\u9884\u7b97"]);
   const asksBenchmark = hasAny(text, raw, ["model", "benchmark", "\u6a21\u578b", "\u6d4b\u8bc4"]);
+
+  if (asksEnergy && state.selectedEnergyGrid) {
+    const p = state.selectedEnergyGrid.properties;
+    const season = state.activeEnergySeason;
+    return `Energy grid ${p.grid_id}: ${state.energy?.seasons?.[season]?.short || season} TMY energy is ${energyFormatValue(p[`${season}_tmy_kwh`], "tmy_kwh")}, WRF/microclimate energy is ${energyFormatValue(p[`${season}_wrf_kwh`], "wrf_kwh")}, and the WRF-vs-TMY shift is ${energyFormatValue(p[`${season}_diff_pct`], "diff_pct")} across ${formatNumber(p.energy_building_count, 0)} buildings. This is a microclimate-energy evidence layer, not the selected retrofit portfolio itself.`;
+  }
+
+  if (asksEnergy && state.selectedBuilding) {
+    const b = state.selectedBuilding.properties;
+    const record = cachedBuildingEnergyRecord(b.bldg_id);
+    const season = state.activeEnergySeason;
+    if (record) {
+      return `Building ${b.bldg_id}: ${state.energy?.seasons?.[season]?.short || season} TMY energy is ${energyFormatValue(record[`${season}_tmy_kwh`], "tmy_kwh")}, WRF/microclimate energy is ${energyFormatValue(record[`${season}_wrf_kwh`], "wrf_kwh")}, and the shift is ${energyFormatValue(record[`${season}_diff_pct`], "diff_pct")}. Type is ${record.type_label || b.coarse_function || "n/a"}, grid ${record.grid_id || b.grid_id || "n/a"}.`;
+    }
+    return `Building ${b.bldg_id} is selected, but its energy shard is still loading. Open the Energy panel or wait a moment, then ask again.`;
+  }
+
+  if (asksEnergy && state.energy) {
+    const top = energyGridRowsForMetric()
+      .slice(0, 4)
+      .map((feature) => {
+        const p = feature.properties;
+        return `grid ${p.grid_id} (${energyFormatValue(p[energyMetricField()], state.activeEnergyMetric)})`;
+      })
+      .join("; ");
+    const type = energyTypeRowsForSeason()[0];
+    return `The active Energy view is ${energyMetricLabel()} at ${ENERGY_MODES[state.activeEnergyMode]} resolution. Largest grid responses by the active metric: ${top}. The highest building-type shift is ${type ? `${type.type_label} at ${energyFormatValue(type[`${state.activeEnergySeason}_diff_pct`], "diff_pct")}` : "not available"}.`;
+  }
+
+  if (asksMicroclimate && state.selectedMicroclimate) {
+    const p = state.selectedMicroclimate.properties;
+    const season = state.activeMicroSeason;
+    return `Microclimate grid ${p.grid_id}: ${state.microclimate.seasons[season]?.short || season} LCZ sensitivity is ${formatNumber(p[`sensitivity_${season}_pct`], 1)}%, dominant ${p.LCZ_label || "LCZ n/a"}, mean WRF T2 ${formatNumber(p[`wrf_${season}_temp_mean`], 1)} C, RH ${formatNumber(p[`wrf_${season}_rh_mean`], 1)}%, shortwave ${formatNumber(p[`wrf_${season}_solar_mean`], 1)} W/m2 and wind ${formatNumber(p[`wrf_${season}_wind_mean`], 2)} m/s. This is evidence for the retrofit optimizer, not a selected allocation by itself.`;
+  }
+
+  if (asksMicroclimate && state.microclimate) {
+    const rows = microLczRowsForSeason().slice(0, 3);
+    const summary = rows
+      .map((row) => `${row.LCZ_label || row.LCZ_name}: ${formatNumber(row.S_Mean_Weighted, 1)}%`)
+      .join("; ");
+    return `The active microclimate layer is ${microclimateMetricLabel()}. Top LCZ sensitivity classes are ${summary}. Use the Energy sidebar for TMY-vs-WRF building and 500 m energy responses.`;
+  }
 
   if (asksHotspot) {
     const top = state.data.allocationGeojson.features

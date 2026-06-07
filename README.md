@@ -48,6 +48,38 @@ DEEPSEEK_API_KEY=...
 
 Then set `window.SHANGHAI_OPTAGENT_CONFIG.llm.proxyEndpoint` in `src/config.js` to the Worker URL. The frontend will call the proxy without exposing the DeepSeek key to viewers.
 
+## Render Backend Agent
+
+The repository now also includes a FastAPI backend for Render:
+
+```text
+backend/main.py
+backend/requirements.txt
+render.yaml
+```
+
+Render build command:
+
+```text
+pip install -r backend/requirements.txt
+```
+
+Render start command:
+
+```text
+uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+```
+
+Set the secret only in the Render dashboard:
+
+```text
+DEEPSEEK_API_KEY=...
+```
+
+When deployed on an `onrender.com` domain, the frontend automatically calls `/api/chat`. If the key is missing, the backend still returns a deterministic local OptAgent answer from the loaded platform data so the architecture can be tested safely.
+
+For Render, connect this GitHub repository as a Web Service or Blueprint, keep the default Python build/start commands from `render.yaml`, and add only the `DEEPSEEK_API_KEY` secret in the Render dashboard. Do not commit `sk...` keys into frontend files.
+
 ## Data
 
 Generated data are stored in:
@@ -82,6 +114,78 @@ The Evidence panel also loads:
 - `archetype_strategy_rank_rows.csv` and `archetype_strategy_rank_matrix.csv` for the building-type retrofit ranking
 - `policy_translation_strategy_macc.csv` and `policy_translation_district_fairness.csv` for policy cost and equity evidence
 - Figure assets for Fig. 12 and Fig. 15 as visual references alongside the interactive tables
+
+## Microclimate Evidence Data
+
+The Microclimate panel uses a compact generated file:
+
+```text
+data/microclimate-platform-data.json
+```
+
+Regenerate it from the previous Shanghai microclimate-energy paper outputs:
+
+```powershell
+python .\scripts\build_microclimate_platform_data.py
+```
+
+The generated file includes:
+
+- LCZ sensitivity at 500 m grid level for cooling, heating and transition seasons
+- WRF representative-week 500 m summaries for T2, RH, shortwave radiation and 10 m wind
+- citywide WRF hourly representative-week curves for the sidebar chart
+- SRC and end-use decomposition evidence tables
+- interactive Fig. 10 spatial allocation/context references
+
+The current platform is configured to use the published Mapbox Studio vector tileset for the 500 m microclimate layer:
+
+```js
+microclimateTileset: {
+  enabled: true,
+  sourceUrl: "mapbox://jpyjpy.qrb7lj6bn0ko",
+  sourceLayer: "f5048eeda1c5e1f97408",
+  minzoom: 8
+}
+```
+
+If the tileset is disabled, the platform can still fall back to the bundled 500 m GeoJSON extract.
+
+For optional Mapbox hosting of the summary layer, the same script also writes:
+
+```text
+mapbox_studio_upload/09_shanghai_microclimate_500m_summary.geojson
+```
+
+This file is about 19 MB and can be uploaded directly in Mapbox Studio if you prefer serving the microclimate summary layer as a vector tileset later.
+
+## Energy Evidence Data
+
+The Energy panel is separate from Microclimate. It supports:
+
+- exact single-building TMY week, WRF/microclimate week, and percent-difference records loaded by building-id shards
+- 500 m grid aggregates for map coloring and click inspection
+- building-type representative-week energy rankings
+
+Regenerate it from the Shanghai representative-week energy workbooks:
+
+```powershell
+python .\scripts\build_energy_platform_data.py
+```
+
+Generated frontend files:
+
+```text
+data/energy-platform-data.json
+data/energy-building-shards/energy-buildings-00.json ... energy-buildings-23.json
+```
+
+The same script also writes an optional Mapbox Studio upload file:
+
+```text
+mapbox_studio_upload/10_shanghai_energy_500m_summary.geojson
+```
+
+The building shard id maps to the current building tileset with `bldg_id = TARGET_FID + 1`, matching the Mapbox `objectid/bldg_id` used by the 3D footprint layer.
 
 ## Current Mapbox Building Tileset
 
