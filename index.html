@@ -119,6 +119,16 @@
             <span class="control-label">Representative week</span>
             <div id="microSeasonButtons" class="segmented compact three"></div>
           </div>
+          <div id="microTimeBlock" class="control-block weather-time-block hidden-block">
+            <div class="control-label-row">
+              <span class="control-label">WRF time</span>
+              <output id="microTimeLabel">Summary</output>
+            </div>
+            <div class="time-row">
+              <input id="microTime" type="range" min="0" max="0" value="0" step="1" />
+              <button id="microPlay" type="button">Play</button>
+            </div>
+          </div>
           <div class="control-block">
             <label>
               <span class="control-label">Grid opacity</span>

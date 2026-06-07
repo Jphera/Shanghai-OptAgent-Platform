@@ -220,6 +220,11 @@ const state = {
   microclimate: null,
   activeMicroSeason: "cooling",
   activeMicroMetric: "sensitivity",
+  activeMicroHour: 0,
+  microTimeseriesManifest: null,
+  microTimeseriesCache: new Map(),
+  activeMicroTimeseries: null,
+  microPlaybackTimer: null,
   selectedMicroclimate: null,
   microclimateSourceMode: null,
   energy: null,
@@ -234,7 +239,10 @@ const state = {
   microGridOpacity: 0.68,
   energyGridOpacity: 0.64,
   mapFocusMode: "buildings",
-  buildingLayerError: null
+  buildingLayerError: null,
+  buildingLayerStage: "not-started",
+  buildingLayerEventsBound: false,
+  buildingLayerRetries: 0
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -248,6 +256,7 @@ async function init() {
 
   state.data = await loadData();
   state.microclimate = await loadMicroclimateData();
+  state.microTimeseriesManifest = await loadMicroTimeseriesManifest();
   renderOverview();
   renderMicroclimatePanel();
   renderEnergyPanel();
@@ -272,6 +281,21 @@ async function loadMicroclimateData() {
   try {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Unable to load microclimate data: ${response.status}`);
+    return response.json();
+  } catch (error) {
+    console.warn(error);
+    return null;
+  }
+}
+
+async function loadMicroTimeseriesManifest() {
+  const manifestUrl =
+    (state.microclimate && state.microclimate.metadata && state.microclimate.metadata.weather_timeseries_manifest) ||
+    (state.microclimate && state.microclimate.weatherTimeseries && state.microclimate.weatherTimeseries.manifest);
+  if (!manifestUrl) return null;
+  try {
+    const response = await fetch(manifestUrl);
+    if (!response.ok) throw new Error(`Unable to load WRF time-series manifest: ${response.status}`);
     return response.json();
   } catch (error) {
     console.warn(error);
@@ -713,100 +737,133 @@ function addMapSourcesAndLayers() {
 
 function addBuildingTilesetLayer() {
   const cfg = CONFIG.buildingTileset || {};
-  if (!cfg.enabled || !cfg.sourceUrl || !cfg.sourceLayer || !state.map) return;
+  if (!state.map) return;
+  if (!cfg.enabled) {
+    state.buildingLayerStage = "disabled";
+    return;
+  }
+  if (!cfg.sourceUrl || !cfg.sourceLayer) {
+    state.buildingLayerStage = "config-missing";
+    state.buildingLayerError = "buildingTileset.sourceUrl or buildingTileset.sourceLayer is missing.";
+    return;
+  }
   const map = state.map;
   state.buildingLayerError = null;
+  state.buildingLayerStage = "adding-source";
 
   try {
-    map.addSource("shanghai-buildings", {
-      type: "vector",
-      url: cfg.sourceUrl
-    });
+    if (!map.getSource("shanghai-buildings")) {
+      map.addSource("shanghai-buildings", {
+        type: "vector",
+        url: cfg.sourceUrl
+      });
+    }
+    state.buildingLayerStage = "adding-fill-layer";
 
-    map.addLayer({
-      id: "building-fill",
-      type: "fill-extrusion",
-      source: "shanghai-buildings",
-      "source-layer": cfg.sourceLayer,
-      minzoom: cfg.minzoom || 12.5,
-      paint: {
-        "fill-extrusion-color": buildingFunctionColorExpression(),
-        "fill-extrusion-height": [
-          "interpolate",
-          ["linear"],
-          ["zoom"],
-          cfg.minzoom || 12.5,
-          ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 0.18],
-          (cfg.minzoom || 12.5) + 1.2,
-          ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 1.25]
-        ],
-        "fill-extrusion-base": 0,
-        "fill-extrusion-opacity": [
-          "case",
-          ["boolean", ["feature-state", "hover"], false],
-          0.88,
-          0.72
-        ]
-      }
-    });
+    if (!map.getLayer("building-fill")) {
+      map.addLayer({
+        id: "building-fill",
+        type: "fill-extrusion",
+        source: "shanghai-buildings",
+        "source-layer": cfg.sourceLayer,
+        minzoom: cfg.minzoom || 12.5,
+        paint: {
+          "fill-extrusion-color": buildingFunctionColorExpression(),
+          "fill-extrusion-height": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            cfg.minzoom || 12.5,
+            ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 0.18],
+            (cfg.minzoom || 12.5) + 1.2,
+            ["*", ["coalesce", ["to-number", ["get", "height_m"]], 8], 1.25]
+          ],
+          "fill-extrusion-base": 0,
+          "fill-extrusion-opacity": [
+            "case",
+            ["boolean", ["feature-state", "hover"], false],
+            0.88,
+            0.72
+          ]
+        }
+      });
+    }
+    state.buildingLayerStage = "adding-line-layers";
 
-    map.addLayer({
-      id: "building-line",
-      type: "line",
-      source: "shanghai-buildings",
-      "source-layer": cfg.sourceLayer,
-      minzoom: cfg.minzoom || 12.5,
-      paint: {
-        "line-color": "#ffffff",
-        "line-opacity": 0.42,
-        "line-width": 0.45
-      }
-    });
+    if (!map.getLayer("building-line")) {
+      map.addLayer({
+        id: "building-line",
+        type: "line",
+        source: "shanghai-buildings",
+        "source-layer": cfg.sourceLayer,
+        minzoom: cfg.minzoom || 12.5,
+        paint: {
+          "line-color": "#ffffff",
+          "line-opacity": 0.42,
+          "line-width": 0.45
+        }
+      });
+    }
 
-    map.addLayer({
-      id: "building-selected-line",
-      type: "line",
-      source: "shanghai-buildings",
-      "source-layer": cfg.sourceLayer,
-      minzoom: cfg.minzoom || 12.5,
-      filter: emptyBuildingSelectionFilter(),
-      paint: {
-        "line-color": "#172126",
-        "line-width": 2.4,
-        "line-opacity": 0.95
-      }
-    });
+    if (!map.getLayer("building-selected-line")) {
+      map.addLayer({
+        id: "building-selected-line",
+        type: "line",
+        source: "shanghai-buildings",
+        "source-layer": cfg.sourceLayer,
+        minzoom: cfg.minzoom || 12.5,
+        filter: emptyBuildingSelectionFilter(),
+        paint: {
+          "line-color": "#172126",
+          "line-width": 2.4,
+          "line-opacity": 0.95
+        }
+      });
+    }
+    state.buildingLayerStage = "binding-events";
 
-    map.on("click", "building-fill", (event) => {
-      const feature = event.features && event.features[0];
-      if (!feature) return;
-      selectBuildingFeature(feature, event.lngLat);
-    });
+    if (!state.buildingLayerEventsBound) {
+      map.on("click", "building-fill", (event) => {
+        const feature = event.features && event.features[0];
+        if (!feature) return;
+        selectBuildingFeature(feature, event.lngLat);
+      });
 
-    map.on("mouseenter", "building-fill", () => {
-      map.getCanvas().style.cursor = "pointer";
-    });
+      map.on("mouseenter", "building-fill", () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
 
-    map.on("mouseleave", "building-fill", () => {
-      map.getCanvas().style.cursor = "";
-    });
+      map.on("mouseleave", "building-fill", () => {
+        map.getCanvas().style.cursor = "";
+      });
 
-    map.on("sourcedata", (event) => {
-      if (event.sourceId === "shanghai-buildings") updateBuildingStatus();
-    });
+      map.on("sourcedata", (event) => {
+        if (event.sourceId === "shanghai-buildings") updateBuildingStatus();
+      });
 
-    map.on("error", (event) => {
-      const message = event?.error?.message || "";
-      if (event.sourceId === "shanghai-buildings" || message.includes("shanghai-buildings") || message.includes(cfg.sourceUrl)) {
-        state.buildingLayerError = message || "Mapbox reported a building tileset error.";
-        updateBuildingStatus();
-      }
-    });
+      map.on("error", (event) => {
+        const message = event?.error?.message || "";
+        if (
+          event.sourceId === "shanghai-buildings" ||
+          message.includes("shanghai-buildings") ||
+          message.includes(cfg.sourceUrl) ||
+          message.includes(cfg.sourceLayer)
+        ) {
+          state.buildingLayerError = message || "Mapbox reported a building tileset error.";
+          state.buildingLayerStage = "mapbox-error";
+          updateBuildingStatus();
+        }
+      });
+      state.buildingLayerEventsBound = true;
+    }
 
+    state.buildingLayerStage = "layers-added";
+    state.buildingLayerRetries = 0;
     updateBuildingStatus();
   } catch (error) {
     console.warn("Unable to add 3D building tileset layer", error);
     state.buildingLayerError = error.message || "Mapbox layer error";
+    state.buildingLayerStage = "add-layer-error";
     updateBuildingStatus();
   }
 }
@@ -850,13 +907,139 @@ function opportunityColorExpression() {
 
 function microclimateMetricField(metric = state.activeMicroMetric, season = state.activeMicroSeason) {
   if (metric === "sensitivity") return `sensitivity_${season}_pct`;
+  if (isHourlyMicroMetric(metric) && state.activeMicroTimeseries?.season === season && state.activeMicroTimeseries?.variable === metric) {
+    return "wrf_hourly_value";
+  }
   return `wrf_${season}_${metric}_mean`;
 }
 
 function microclimateMetricLabel(metric = state.activeMicroMetric, season = state.activeMicroSeason) {
   const meta = MICRO_METRICS[metric] || MICRO_METRICS.sensitivity;
   const seasonMeta = state.microclimate && state.microclimate.seasons ? state.microclimate.seasons[season] : null;
-  return `${meta.label}${seasonMeta ? ` - ${seasonMeta.short}` : ""}`;
+  const timeLabel =
+    metric === state.activeMicroMetric && isHourlyMicroMetric(metric) && state.activeMicroTimeseries
+      ? ` @ ${activeMicroTimeLabel()}`
+      : "";
+  return `${meta.label}${seasonMeta ? ` - ${seasonMeta.short}` : ""}${timeLabel}`;
+}
+
+function isHourlyMicroMetric(metric = state.activeMicroMetric) {
+  return MICRO_METRICS[metric]?.kind === "wrf";
+}
+
+function microTimeseriesSpec(season = state.activeMicroSeason, variable = state.activeMicroMetric) {
+  return state.microTimeseriesManifest?.datasets?.[season]?.[variable] || state.microclimate?.weatherTimeseries?.datasets?.[season]?.[variable] || null;
+}
+
+function activeMicroTimeLabel() {
+  const times = state.activeMicroTimeseries?.times || microTimeseriesSpec()?.times || [];
+  return times[state.activeMicroHour] || `hour ${state.activeMicroHour + 1}`;
+}
+
+async function loadMicroTimeseries(season, variable) {
+  const key = `${season}:${variable}`;
+  if (state.microTimeseriesCache.has(key)) return state.microTimeseriesCache.get(key);
+  const spec = microTimeseriesSpec(season, variable);
+  const gridIds = spec?.gridIds || state.microTimeseriesManifest?.gridIds || [];
+  if (!spec || !spec.file || !gridIds.length) {
+    throw new Error(`WRF time-series dataset is not available for ${season}/${variable}.`);
+  }
+  const response = await fetch(spec.file);
+  if (!response.ok) throw new Error(`Unable to load WRF time-series ${season}/${variable}: ${response.status}`);
+  const buffer = await response.arrayBuffer();
+  const data = new Uint16Array(buffer);
+  const gridIndex = new Map(gridIds.map((gridId, index) => [Number(gridId), index]));
+  const times = spec.times || [];
+  const hourCount = Number(spec.shape?.[1] || times.length || 1);
+  const record = {
+    season,
+    variable,
+    spec,
+    times,
+    data,
+    gridIndex,
+    gridCount: Number(spec.shape?.[0] || gridIds.length),
+    hourCount,
+    offset: Number(spec.offset ?? spec.min ?? 0),
+    scale: Number(spec.scale || 1),
+    missing: Number(spec.missing ?? 65535)
+  };
+  state.microTimeseriesCache.set(key, record);
+  return record;
+}
+
+async function ensureActiveMicroTimeseries() {
+  if (!isHourlyMicroMetric()) {
+    state.activeMicroTimeseries = null;
+    updateMicroTimeControls();
+    return null;
+  }
+  const record = await loadMicroTimeseries(state.activeMicroSeason, state.activeMicroMetric);
+  state.activeMicroTimeseries = record;
+  state.activeMicroHour = Math.min(state.activeMicroHour, Math.max(0, record.hourCount - 1));
+  updateMicroTimeControls();
+  return record;
+}
+
+function decodeMicroTimeseriesValue(record, gridId, hour = state.activeMicroHour) {
+  const gridIndex = record.gridIndex.get(Number(gridId));
+  if (gridIndex === undefined) return null;
+  const raw = record.data[gridIndex * record.hourCount + hour];
+  if (raw === record.missing || raw === undefined) return null;
+  return record.offset + raw * record.scale;
+}
+
+function applyMicroclimateHourlyValues(updateSource = true) {
+  if (!state.microclimate?.microclimateGeojson || !state.activeMicroTimeseries || state.microclimateSourceMode !== "geojson") {
+    return;
+  }
+  const record = state.activeMicroTimeseries;
+  const hour = state.activeMicroHour;
+  state.microclimate.microclimateGeojson.features.forEach((feature) => {
+    const value = decodeMicroTimeseriesValue(record, feature.properties.grid_id, hour);
+    if (value === null) {
+      delete feature.properties.wrf_hourly_value;
+    } else {
+      feature.properties.wrf_hourly_value = Math.round(value * 100) / 100;
+    }
+  });
+  if (updateSource && state.map?.getSource("microclimate")) {
+    state.map.getSource("microclimate").setData(state.microclimate.microclimateGeojson);
+  }
+}
+
+function clearMicroclimatePlayback() {
+  if (state.microPlaybackTimer) {
+    window.clearInterval(state.microPlaybackTimer);
+    state.microPlaybackTimer = null;
+  }
+  const play = document.getElementById("microPlay");
+  if (play) play.textContent = "Play";
+}
+
+function updateMicroTimeControls() {
+  const block = document.getElementById("microTimeBlock");
+  const input = document.getElementById("microTime");
+  const label = document.getElementById("microTimeLabel");
+  const play = document.getElementById("microPlay");
+  const record = state.activeMicroTimeseries;
+  const show = isHourlyMicroMetric() && Boolean(microTimeseriesSpec());
+  if (block) block.classList.toggle("hidden-block", !show);
+  if (!show) {
+    if (label) label.textContent = "Summary";
+    if (input) input.disabled = true;
+    if (play) play.disabled = true;
+    clearMicroclimatePlayback();
+    return;
+  }
+  const max = Math.max(0, (record?.hourCount || microTimeseriesSpec()?.times?.length || 1) - 1);
+  if (input) {
+    input.disabled = !record;
+    input.max = String(max);
+    input.value = String(Math.min(state.activeMicroHour, max));
+  }
+  if (label) label.textContent = record ? activeMicroTimeLabel() : "Loading WRF hours...";
+  if (play) play.disabled = !record;
 }
 
 function microclimateColorExpression() {
@@ -887,6 +1070,14 @@ function microclimateColorExpression() {
 }
 
 function microclimateMetricRange(field) {
+  if (field === "wrf_hourly_value" && state.activeMicroTimeseries) {
+    const spec = state.activeMicroTimeseries.spec || {};
+    return {
+      min: Number(spec.min ?? state.activeMicroTimeseries.offset ?? 0),
+      max: Number(spec.max ?? 1),
+      mean: null
+    };
+  }
   const features =
     state.microclimate && state.microclimate.microclimateGeojson
       ? state.microclimate.microclimateGeojson.features || []
@@ -1261,6 +1452,27 @@ function syncMapLayerVisibility() {
 }
 
 function syncMicroclimateLayer() {
+  if (!isHourlyMicroMetric()) {
+    state.activeMicroTimeseries = null;
+  }
+  updateMicroTimeControls();
+  if (isHourlyMicroMetric()) {
+    ensureActiveMicroTimeseries()
+      .then((record) => {
+        if (record) {
+          applyMicroclimateHourlyValues();
+          renderMicroMetricCards();
+          renderMicroNarrative();
+        }
+        syncMapLayerVisibility();
+      })
+      .catch((error) => {
+        console.warn(error);
+        state.activeMicroTimeseries = null;
+        updateMicroTimeControls();
+        syncMapLayerVisibility();
+      });
+  }
   syncMapLayerVisibility();
 }
 
@@ -1340,10 +1552,15 @@ function wireMicroclimateControls() {
   const seasonBox = document.getElementById("microSeasonButtons");
   const metricBox = document.getElementById("microMetricButtons");
   const opacityInput = document.getElementById("microOpacity");
+  const timeInput = document.getElementById("microTime");
+  const playButton = document.getElementById("microPlay");
   seasonBox?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-micro-season]");
     if (!button) return;
     state.activeMicroSeason = button.dataset.microSeason;
+    state.activeMicroHour = 0;
+    state.activeMicroTimeseries = null;
+    clearMicroclimatePlayback();
     renderMicroclimatePanel();
     syncMicroclimateLayer();
   });
@@ -1351,12 +1568,40 @@ function wireMicroclimateControls() {
     const button = event.target.closest("[data-micro-metric]");
     if (!button) return;
     state.activeMicroMetric = button.dataset.microMetric;
+    state.activeMicroHour = 0;
+    state.activeMicroTimeseries = null;
+    clearMicroclimatePlayback();
     renderMicroclimatePanel();
     syncMicroclimateLayer();
   });
   opacityInput?.addEventListener("input", (event) => {
     state.microGridOpacity = Number(event.target.value) || 0.68;
     syncMicroclimateLayer();
+  });
+  timeInput?.addEventListener("input", (event) => {
+    state.activeMicroHour = Number(event.target.value) || 0;
+    applyMicroclimateHourlyValues();
+    renderMicroMetricCards();
+    renderMicroNarrative();
+    updateMicroTimeControls();
+    syncMapLayerVisibility();
+  });
+  playButton?.addEventListener("click", () => {
+    if (!state.activeMicroTimeseries) return;
+    if (state.microPlaybackTimer) {
+      clearMicroclimatePlayback();
+      return;
+    }
+    playButton.textContent = "Pause";
+    state.microPlaybackTimer = window.setInterval(() => {
+      const max = Math.max(0, state.activeMicroTimeseries.hourCount - 1);
+      state.activeMicroHour = state.activeMicroHour >= max ? 0 : state.activeMicroHour + 1;
+      applyMicroclimateHourlyValues();
+      renderMicroMetricCards();
+      renderMicroNarrative();
+      updateMicroTimeControls();
+      syncMapLayerVisibility();
+    }, 650);
   });
 }
 
@@ -1373,6 +1618,9 @@ function renderMicroclimatePanel() {
 
   renderMicroSeasonButtons();
   renderMicroMetricButtons();
+  renderMicroMetricCards();
+  renderMicroNarrative();
+  updateMicroTimeControls();
 }
 
 function renderMicroSeasonButtons() {
@@ -3079,6 +3327,7 @@ function updateBuildingStatus() {
   const node = document.getElementById("buildingStatus");
   if (!node || !state.map) return;
   const cfg = CONFIG.buildingTileset || {};
+  node.title = "";
   if (!cfg.enabled) {
     node.textContent = "3D buildings disabled";
     return;
@@ -3089,7 +3338,17 @@ function updateBuildingStatus() {
     return;
   }
   if (!state.map.getLayer("building-fill")) {
-    node.textContent = state.map.loaded() ? "3D buildings source pending" : "3D buildings loading";
+    if (state.map.isStyleLoaded?.() && state.buildingLayerRetries < 3) {
+      state.buildingLayerRetries += 1;
+      addBuildingTilesetLayer();
+    }
+    if (state.map.getLayer("building-fill")) {
+      updateBuildingStatus();
+      return;
+    }
+    const stage = state.buildingLayerStage || "not-started";
+    node.textContent = state.map.loaded() ? `3D buildings layer not added: ${stage}` : "3D buildings loading";
+    node.title = `Configured source: ${cfg.sourceUrl || "n/a"} | source-layer: ${cfg.sourceLayer || "n/a"} | stage: ${stage}`;
     return;
   }
   if (state.map.getLayoutProperty("building-fill", "visibility") === "none") {
@@ -3315,7 +3574,15 @@ async function callAgentProxy(message, endpoint, model) {
     throw new Error(`HTTP ${response.status}`);
   }
   const json = await response.json();
-  return json.answer || json.content || json.message || "The agent proxy returned no readable answer.";
+  const answer = json.answer || json.content || json.message || "The agent proxy returned no readable answer.";
+  const mode =
+    json.mode === "deepseek"
+      ? "DeepSeek agent service"
+      : json.mode === "local-backend"
+        ? "Render local evidence fallback"
+        : json.mode || "agent proxy";
+  const warning = json.warning ? ` ${json.warning}` : "";
+  return `${answer}\n\n[${mode}.${warning}]`;
 }
 
 async function callRemoteModel(message, apiKey, endpoint, model) {
@@ -3374,6 +3641,9 @@ function buildContextPrompt() {
             season: state.activeMicroSeason,
             metric: state.activeMicroMetric,
             metricLabel: microclimateMetricLabel(),
+            hourIndex: state.activeMicroHour,
+            timeLabel: activeMicroTimeLabel(),
+            hourlyTimeseriesLoaded: Boolean(state.activeMicroTimeseries),
             lczTopRows: microLczRowsForSeason().slice(0, 5),
             wrfSeriesStats:
               state.microclimate.wrfSeries?.[state.activeMicroSeason]?.[
@@ -3509,7 +3779,16 @@ function localAgentAnswer(message) {
     if (asksBenchmark) {
       return summarizeModels();
     }
-    return "Please select a grid first. I can then explain why the strategy was selected, what the critic agent checks, and how the grid compares with the 1B RMB portfolio.";
+    if (asksBudget) {
+      return summarizeBudget();
+    }
+    const scenario = state.data.scenarioSummary.find((row) => row.scenario_id === state.scenarioId);
+    const gridCount = state.data.opportunityGeojson?.features?.length || 0;
+    const microCount = state.microclimate?.metadata?.grid_count || 0;
+    const annual = scenario
+      ? `${formatNumber(Number(scenario.annual_carbon_reduction_tco2__cluster_weighted_13_14_25 || 0) / 1000, 1)} ktCO2/yr`
+      : "n/a";
+    return `At city scale, Shanghai OptAgent links ${formatNumber(gridCount)} retrofit opportunity grids, ${formatNumber(microCount)} WRF 500 m microclimate cells, building-level semantic attributes, and the 10-model agent benchmark. The active comparison is ${scenarioLabel(state.scenarioId)}, with about ${annual} annual carbon reduction under the portfolio constraints. You can ask a general paper/platform question directly, or click a building/grid when you want object-level evidence.`;
   }
 
   if (asksWhy || text.includes("strategy")) {

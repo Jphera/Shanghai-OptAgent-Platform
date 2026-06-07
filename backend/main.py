@@ -102,10 +102,11 @@ async def chat(payload: ChatRequest) -> dict[str, Any]:
     try:
         answer = await call_deepseek(message, payload.model, compact_context, api_key)
     except (HTTPException, httpx.HTTPError) as error:
+        detail = str(error).replace(api_key, "[redacted]")[:220]
         return {
             "answer": local_answer(message, compact_context),
             "mode": "local-backend",
-            "warning": f"DeepSeek request failed; returned local fallback ({type(error).__name__}).",
+            "warning": f"DeepSeek request failed; returned local fallback ({type(error).__name__}: {detail}).",
             "evidence": compact_context.get("evidence", []),
         }
     return {
@@ -201,7 +202,8 @@ async def call_deepseek(message: str, model: str, context: dict[str, Any], api_k
         "microclimate-aware decarbonization platform. Answer using only the supplied "
         "platform context. Distinguish selected NSGA-II allocation grids from full-city "
         "opportunity grids, WRF/LCZ evidence grids, and TMY-vs-WRF energy evidence. Be concise, quantitative, and "
-        "explicit about uncertainty."
+        "explicit about uncertainty. If the user has not selected a map object, answer at the city/platform/paper level; "
+        "do not ask them to select a grid unless the question truly needs object-level evidence."
     )
     body = {
         "model": model or "deepseek-chat",
@@ -234,6 +236,9 @@ def local_answer(message: str, context: dict[str, Any]) -> str:
     building_energy = context.get("selectedBuildingEnergy") or {}
     selected = context.get("selectedGrid") or {}
     energy_rows = context.get("topEnergyGridRows") or []
+    core = context.get("coreMetrics") or {}
+    micro_meta = context.get("microclimateMetadata") or {}
+    energy_meta = context.get("energyMetadata") or {}
 
     if micro:
         season = (context.get("microclimateView") or {}).get("season", "cooling")
@@ -273,9 +278,17 @@ def local_answer(message: str, context: dict[str, Any]) -> str:
         first = energy_rows[0]
         return (
             f"The proposed scenario is {scenario.get('scenario_id', 'S3')}. Representative-week energy evidence is loaded; "
-            f"the strongest grid response currently shown is {first}. Ask about a selected building, energy grid, or WRF/LCZ cell for a tighter answer."
+            f"the strongest grid response currently shown is {first}. At city scale, the backend can discuss the paper workflow, "
+            f"microclimate-energy coupling, benchmark evidence, and retrofit allocation without requiring a selected grid."
         )
-    return "Shanghai OptAgent backend is running, but no selected grid/building/microclimate cell was supplied in the context."
+    return (
+        "Shanghai OptAgent is connected to the Render backend and can answer at city scale even without a selected map object. "
+        f"The loaded context includes {core.get('optimization_units', 'n/a')} semantic decision units, "
+        f"{micro_meta.get('grid_count', 'n/a')} WRF 500 m microclimate cells, "
+        f"{energy_meta.get('grid_count', 'n/a')} energy grids, and the active scenario "
+        f"{scenario.get('scenario_id', 'S3_proposed_refined_microclimate_agentic')}. "
+        "Clicking a building or grid simply adds object-level evidence to the same agent conversation."
+    )
 
 
 app.mount("/", StaticFiles(directory=ROOT, html=True), name="static")

@@ -342,6 +342,41 @@ h2 {
   text-transform: uppercase;
 }
 
+.control-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.control-label-row .control-label {
+  margin-bottom: 0;
+}
+
+.control-label-row output {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.time-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 74px;
+  gap: 10px;
+  align-items: center;
+}
+
+.time-row button {
+  min-height: 36px;
+  padding: 7px 10px;
+  font-weight: 800;
+}
+
+.hidden-block {
+  display: none;
+}
+
 .summary-text {
   margin: 0;
   color: var(--muted);
