@@ -8,10 +8,10 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
   microclimateDataUrl: "./data/microclimate-platform-data.json",
   energyDataUrl: "./data/energy-platform-data.json",
   initialView: {
-    center: [121.4737, 31.2304],
-    zoom: 9.15,
-    pitch: 46,
-    bearing: -18
+    center: [121.4903, 31.2397],
+    zoom: 14.55,
+    pitch: 62,
+    bearing: -24
   },
   llm: {
     providerName: "DeepSeek",
@@ -21,10 +21,10 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
   },
   buildingTileset: {
     enabled: true,
-    sourceUrl: "mapbox://jpyjpy.vqqao0uef4p8",
-    sourceLayer: "66de023c0080f21b24ff",
+    sourceUrl: "mapbox://jpyjpy.rinkgkw6s4rz",
+    sourceLayer: "61360c70f5ca9330b9e7",
     minzoom: 10.8,
-    note: "Mapbox Studio tileset 08_shanghai_buildings_footprints. Source-layer id was read from TileJSON vector_layers. A smaller 11_shanghai_buildings_3d_height upload source can replace this tileset after publishing."
+    note: "Mapbox Studio tileset 11_shanghai_buildings_3d_height. Source-layer id was read from TileJSON vector_layers."
   },
   microclimateTileset: {
     enabled: true,

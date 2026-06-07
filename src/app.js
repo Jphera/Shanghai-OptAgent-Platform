@@ -233,7 +233,7 @@ const state = {
   energyMapEventsBound: false,
   microGridOpacity: 0.68,
   energyGridOpacity: 0.64,
-  mapFocusMode: "default",
+  mapFocusMode: "buildings",
   buildingLayerError: null
 };
 
@@ -391,9 +391,9 @@ function initMap() {
   state.map = new mapboxgl.Map({
     container: "map",
     style: CONFIG.styleUrl || "mapbox://styles/mapbox/light-v11",
-    center: initial.center || [121.4737, 31.2304],
-    zoom: initial.zoom || 9,
-    pitch: initial.pitch ?? 42,
+    center: initial.center || defaultMapCenter(),
+    zoom: initial.zoom || 14.55,
+    pitch: initial.pitch ?? 62,
     bearing: initial.bearing || 0,
     attributionControl: true
   });
@@ -402,7 +402,7 @@ function initMap() {
 
   state.map.on("load", () => {
     addMapSourcesAndLayers();
-    fitAllocation();
+    state.map.once("idle", updateBuildingStatus);
   });
   state.map.on("idle", updateBuildingStatus);
   state.map.on("moveend", updateBuildingStatus);
@@ -3053,11 +3053,15 @@ function focus3DBuildings() {
   if (!state.map) return;
   state.mapFocusMode = "buildings";
   syncMapLayerVisibility();
-  const target = state.selectedBuilding
+  const buildingCenter = state.selectedBuilding
     ? [Number(state.selectedBuilding.properties.center_lon), Number(state.selectedBuilding.properties.center_lat)]
-    : featureCenter(state.selectedFeature || state.selectedOpportunity || state.selectedEnergyGrid) || [121.4737, 31.2304];
+    : null;
+  const target =
+    (buildingCenter && buildingCenter.every(Number.isFinite) ? buildingCenter : null) ||
+    featureCenter(state.selectedBuilding || state.selectedFeature || state.selectedOpportunity || state.selectedEnergyGrid) ||
+    defaultMapCenter();
   state.map.easeTo({
-    center: target.every(Number.isFinite) ? target : [121.4737, 31.2304],
+    center: target.every(Number.isFinite) ? target : defaultMapCenter(),
     zoom: Math.max(state.map.getZoom(), 14.2),
     pitch: 62,
     bearing: -22,
@@ -3065,6 +3069,10 @@ function focus3DBuildings() {
   });
   state.map.once("moveend", updateBuildingStatus);
   updateBuildingStatus();
+}
+
+function defaultMapCenter() {
+  return (CONFIG.initialView && CONFIG.initialView.center) || [121.4903, 31.2397];
 }
 
 function updateBuildingStatus() {
