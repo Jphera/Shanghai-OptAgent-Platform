@@ -98,34 +98,32 @@
           <div class="microclimate-head">
             <p class="eyebrow">Previous paper evidence</p>
             <h2>Representative-week microclimate</h2>
-            <p class="subhead">
-              LCZ sensitivity and WRF 500 m weather fields from the Shanghai microclimate-energy analysis.
+          </div>
+          <div class="control-block">
+            <span class="control-label">Questions to answer:</span>
+            <p class="summary-text">
+              How do representative hot, cold, and transitional weeks reshape local weather exposure across Shanghai?
             </p>
           </div>
-          <div class="metric-grid micro-metric-grid" id="microMetricGrid"></div>
           <div class="control-block">
-            <div class="section-title">Representative week</div>
-            <div id="microSeasonButtons" class="segmented-control three"></div>
+            <span class="control-label">What &amp; How:</span>
+            <p class="summary-text">
+              WRF representative-week outputs and LCZ sensitivity are mapped as 500 m weather evidence for temperature, humidity, solar radiation, wind, and morphology sensitivity.
+            </p>
+          </div>
+          <div class="control-block metric-block">
+            <span class="control-label">WRF representative-week weather</span>
+            <div id="microMetricButtons" class="segmented compact"></div>
           </div>
           <div class="control-block">
-            <div class="section-title">500 m map layer</div>
-            <div id="microMetricButtons" class="segmented-control"></div>
+            <span class="control-label">Representative week</span>
+            <div id="microSeasonButtons" class="segmented compact three"></div>
           </div>
           <div class="control-block">
-            <div class="section-title">Layer interpretation</div>
-            <div id="microNarrative" class="narrative"></div>
-          </div>
-          <div class="control-block">
-            <div class="section-title">WRF citywide weekly signal</div>
-            <div id="wrfSeriesChart" class="micro-series-chart"></div>
-          </div>
-          <div class="control-block">
-            <div class="section-title">LCZ sensitivity ranking</div>
-            <div id="lczSensitivityList" class="micro-list"></div>
-          </div>
-          <div class="control-block">
-            <div class="section-title">Fig. 10 spatial evidence</div>
-            <div id="fig10Explorer" class="fig10-explorer"></div>
+            <label>
+              <span class="control-label">Grid opacity</span>
+              <input id="microOpacity" type="range" min="0.15" max="0.85" value="0.68" step="0.03" />
+            </label>
           </div>
         </div>
 
@@ -133,38 +131,40 @@
           <div class="microclimate-head">
             <p class="eyebrow">Previous paper evidence</p>
             <h2>Building energy response</h2>
-            <p class="subhead">
-              TMY-vs-WRF representative-week energy shifts at both single-building and 500 m grid resolutions.
+          </div>
+          <div class="control-block">
+            <span class="control-label">Questions to answer:</span>
+            <p class="summary-text">
+              How much does microclimate-aware modelling change building energy use across seasons and grid cells?
             </p>
           </div>
-          <div class="metric-grid micro-metric-grid" id="energyMetricGrid"></div>
           <div class="control-block">
-            <div class="section-title">Spatial resolution</div>
-            <div id="energyModeButtons" class="segmented-control"></div>
+            <span class="control-label">What &amp; How:</span>
+            <p class="summary-text">
+              Representative-week simulations compare TMY and WRF-informed energy use at building and 500 m scales.
+            </p>
           </div>
           <div class="control-block">
-            <div class="section-title">Representative week</div>
-            <div id="energySeasonButtons" class="segmented-control three"></div>
+            <label class="control-label" for="energyModeSelect">Step 1: Select Spatial Resolution</label>
+            <select id="energyModeSelect">
+              <option value="building" selected>Individual buildings</option>
+              <option value="grid">Aggregated grid cells (500 m x 500 m)</option>
+              <option value="combined">Individual buildings + aggregated grid cells</option>
+            </select>
           </div>
           <div class="control-block">
-            <div class="section-title">Energy metric</div>
-            <div id="energyMetricButtons" class="segmented-control"></div>
+            <span class="control-label">Step 2: Select Representative Week</span>
+            <div id="energySeasonButtons" class="segmented compact three"></div>
+          </div>
+          <div class="control-block metric-block">
+            <label class="control-label" for="energyMetricSelect">Step 3: Select Energy Use Layer</label>
+            <select id="energyMetricSelect"></select>
           </div>
           <div class="control-block">
-            <div class="section-title">Layer interpretation</div>
-            <div id="energyNarrative" class="narrative"></div>
-          </div>
-          <div class="control-block">
-            <div class="section-title">Selected building</div>
-            <div id="buildingEnergyEvidence" class="micro-list"></div>
-          </div>
-          <div class="control-block">
-            <div class="section-title">500 m grid evidence</div>
-            <div id="energyGridEvidence" class="micro-list"></div>
-          </div>
-          <div class="control-block">
-            <div class="section-title">Building-type energy ranking</div>
-            <div id="energyTypeList" class="micro-list"></div>
+            <label>
+              <span class="control-label">Grid opacity</span>
+              <input id="energyOpacity" type="range" min="0.15" max="0.85" value="0.64" step="0.03" />
+            </label>
           </div>
         </div>
 
@@ -223,53 +223,21 @@
         <div class="unit-examples" id="unitExamples"></div>
       </aside>
 
-      <div id="agentModal" class="agent-modal hidden" role="dialog" aria-modal="true" aria-labelledby="agentModalTitle">
-        <div class="agent-modal-backdrop" id="agentModalBackdrop"></div>
+      <div id="agentModal" class="agent-modal hidden" role="dialog" aria-modal="false" aria-labelledby="agentModalTitle">
         <section class="agent-modal-panel">
           <header class="agent-modal-header">
             <div>
-              <p class="eyebrow">DeepSeek / local research agent</p>
+              <p class="eyebrow">DeepSeek decision agent</p>
               <h2 id="agentModalTitle">Ask OptAgent</h2>
             </div>
             <button id="closeAgentModal" type="button" title="Close">Close</button>
           </header>
-          <div class="control-block">
-            <div id="agentCompactStatus" class="agent-compact-status"></div>
-            <div class="quick-prompt-grid">
-              <button type="button" data-agent-prompt="Explain the selected building and its decision-unit evidence.">Explain selection</button>
-              <button type="button" data-agent-prompt="Run a five-agent audit for the selected grid.">Run audit</button>
-              <button type="button" data-agent-prompt="Find microclimate-sensitive retrofit hotspots.">Find hotspots</button>
-              <button type="button" data-agent-prompt="Compare the proposed agentic portfolio against the energy-only baseline.">Compare baselines</button>
-            </div>
-          </div>
+          <div id="agentThinking" class="agent-thinking hidden"></div>
           <div id="chatLog" class="chat-log" aria-live="polite"></div>
           <form id="chatForm" class="chat-form">
-            <input id="chatInput" type="text" placeholder="Ask about Shanghai retrofit strategy, a selected grid, building semantics, or benchmark evidence..." />
+            <input id="chatInput" type="text" placeholder="Ask about the selected building, energy response, microclimate, or retrofit decision..." />
             <button type="submit">Send</button>
           </form>
-          <details class="agent-debug">
-            <summary>Advanced trace and evidence</summary>
-            <div class="agent-workbench">
-              <div class="section-title">Five-agent workbench</div>
-              <div id="agentCards" class="agent-card-grid"></div>
-            </div>
-            <div id="agentRunState" class="agent-run-state"></div>
-            <div id="agentTrace" class="agent-trace"></div>
-            <div id="agentEvidence" class="agent-evidence-lineage"></div>
-            <div id="agentGuardrails" class="agent-guardrails"></div>
-          </details>
-          <details class="agent-settings">
-            <summary>Connection settings</summary>
-            <div class="control-block">
-              <label for="apiKeyInput">API key</label>
-              <input id="apiKeyInput" type="password" placeholder="Optional local API key; public demo should use a secure proxy" autocomplete="off" />
-              <label for="apiEndpointInput">Endpoint</label>
-              <input id="apiEndpointInput" type="text" />
-              <label for="apiModelInput">Model</label>
-              <input id="apiModelInput" type="text" />
-              <button id="saveApiSettings" type="button" class="wide-button">Save settings</button>
-            </div>
-          </details>
         </section>
       </div>
     </main>

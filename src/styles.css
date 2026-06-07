@@ -310,6 +310,50 @@ h2 {
   color: #ffffff;
 }
 
+.segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.segmented.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.segmented.compact button {
+  min-height: 40px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.segmented button.active {
+  border-color: var(--teal);
+  background: var(--teal);
+  color: #ffffff;
+}
+
+.control-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.summary-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.metric-block {
+  display: grid;
+  gap: 8px;
+}
+
 .micro-series-chart {
   min-height: 128px;
 }
@@ -1128,18 +1172,19 @@ button.list-item {
 .chat-log {
   display: grid;
   gap: 10px;
-  min-height: 260px;
-  max-height: min(48vh, 460px);
+  min-height: 220px;
+  max-height: min(42vh, 360px);
   overflow: auto;
   margin-bottom: 14px;
 }
 
 .agent-modal {
   position: fixed;
-  inset: 0;
+  right: 18px;
+  bottom: 18px;
   z-index: 20;
-  display: grid;
-  place-items: center;
+  display: block;
+  pointer-events: none;
 }
 
 .agent-modal.hidden {
@@ -1147,22 +1192,20 @@ button.list-item {
 }
 
 .agent-modal-backdrop {
-  position: absolute;
-  inset: 0;
-  background: rgba(23, 33, 38, 0.36);
+  display: none;
 }
 
 .agent-modal-panel {
   position: relative;
-  z-index: 1;
-  width: min(720px, calc(100vw - 32px));
-  max-height: calc(100vh - 48px);
+  width: min(430px, calc(100vw - 32px));
+  max-height: calc(100vh - 36px);
   overflow: auto;
-  padding: 18px;
+  padding: 15px;
   border: 1px solid rgba(255, 255, 255, 0.45);
   border-radius: 8px;
   background: var(--panel);
   box-shadow: var(--shadow);
+  pointer-events: auto;
 }
 
 .agent-modal-header {
@@ -1174,7 +1217,22 @@ button.list-item {
 }
 
 .agent-modal-header h2 {
-  font-size: 24px;
+  font-size: 20px;
+}
+
+.agent-thinking {
+  margin-bottom: 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(22, 122, 117, 0.22);
+  border-radius: 8px;
+  background: rgba(22, 122, 117, 0.08);
+  color: var(--teal);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.agent-thinking.hidden {
+  display: none;
 }
 
 .message {
@@ -1275,6 +1333,16 @@ button.list-item {
 
   .building-status {
     max-width: 100%;
+  }
+
+  .agent-modal {
+    right: 10px;
+    bottom: 10px;
+  }
+
+  .agent-modal-panel {
+    width: calc(100vw - 20px);
+    max-height: min(72vh, 620px);
   }
 
   .sidebar {

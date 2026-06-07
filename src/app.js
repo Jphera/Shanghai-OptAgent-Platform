@@ -88,7 +88,8 @@ const MICRO_METRICS = {
 
 const ENERGY_MODES = {
   building: "Single building",
-  grid: "500 m grid"
+  grid: "500 m grid",
+  combined: "Buildings + grid"
 };
 
 const ENERGY_METRICS = {
@@ -230,6 +231,9 @@ const state = {
   activeEnergyMetric: "diff_pct",
   selectedEnergyGrid: null,
   energyMapEventsBound: false,
+  microGridOpacity: 0.68,
+  energyGridOpacity: 0.64,
+  mapFocusMode: "default",
   buildingLayerError: null
 };
 
@@ -765,7 +769,7 @@ function addBuildingTilesetLayer() {
       source: "shanghai-buildings",
       "source-layer": cfg.sourceLayer,
       minzoom: cfg.minzoom || 12.5,
-      filter: ["==", ["get", "bldg_id"], -1],
+      filter: emptyBuildingSelectionFilter(),
       paint: {
         "line-color": "#172126",
         "line-width": 2.4,
@@ -785,6 +789,18 @@ function addBuildingTilesetLayer() {
 
     map.on("mouseleave", "building-fill", () => {
       map.getCanvas().style.cursor = "";
+    });
+
+    map.on("sourcedata", (event) => {
+      if (event.sourceId === "shanghai-buildings") updateBuildingStatus();
+    });
+
+    map.on("error", (event) => {
+      const message = event?.error?.message || "";
+      if (event.sourceId === "shanghai-buildings" || message.includes("shanghai-buildings") || message.includes(cfg.sourceUrl)) {
+        state.buildingLayerError = message || "Mapbox reported a building tileset error.";
+        updateBuildingStatus();
+      }
     });
 
     updateBuildingStatus();
@@ -1120,11 +1136,13 @@ function wirePanels() {
       button.classList.add("active");
       document.querySelectorAll(".panel-section").forEach((panel) => panel.classList.remove("active"));
       document.getElementById(`panel-${state.activePanel}`).classList.add("active");
+      if (state.activePanel !== "energy" || state.activeEnergyMode !== "building") {
+        state.mapFocusMode = "default";
+      }
       if (state.activePanel === "energy") {
         ensureEnergyData();
       }
-      syncMicroclimateLayer();
-      syncEnergyLayer();
+      syncMapLayerVisibility();
     });
   });
 }
@@ -1143,23 +1161,23 @@ function wireLayerControls() {
   });
 
   document.getElementById("toggleBoundary").addEventListener("change", (event) => {
-    setLayerVisibility(["boundary-fill", "boundary-line"], event.target.checked);
+    syncMapLayerVisibility();
   });
 
   document.getElementById("toggleOpportunity").addEventListener("change", (event) => {
-    setLayerVisibility(["opportunity-fill", "opportunity-line", "opportunity-selected-line"], event.target.checked);
+    syncMapLayerVisibility();
   });
 
   document.getElementById("toggleAllocation").addEventListener("change", (event) => {
-    setLayerVisibility(["allocation-fill", "allocation-line", "allocation-selected-line", "agent-highlight-fill"], event.target.checked);
+    syncMapLayerVisibility();
   });
 
   document.getElementById("toggleBuildings").addEventListener("change", (event) => {
-    setLayerVisibility(["building-fill", "building-line", "building-selected-line"], event.target.checked);
+    syncMapLayerVisibility();
   });
 
   document.getElementById("toggleLabels").addEventListener("change", (event) => {
-    setLayerVisibility(["allocation-labels"], event.target.checked);
+    syncMapLayerVisibility();
   });
 
   document.getElementById("fitView").addEventListener("click", fitAllocation);
@@ -1168,6 +1186,8 @@ function wireLayerControls() {
   document.getElementById("askAgentButton").addEventListener("click", openAgentModal);
   document.getElementById("resetPitch").addEventListener("click", () => {
     if (!state.map) return;
+    state.mapFocusMode = "default";
+    syncMapLayerVisibility();
     state.map.easeTo({ pitch: 0, bearing: 0, duration: 600 });
   });
   wireMicroclimateControls();
@@ -1183,31 +1203,69 @@ function setLayerVisibility(layerIds, visible) {
   });
 }
 
-function syncMicroclimateLayer() {
+function checkboxChecked(id, fallback = true) {
+  const node = document.getElementById(id);
+  return node ? node.checked : fallback;
+}
+
+function syncMapLayerVisibility() {
   if (!state.map) return;
-  const visible = state.activePanel === "microclimate" && Boolean(state.microclimate);
-  setLayerVisibility(["microclimate-fill", "microclimate-line", "microclimate-selected-line"], visible);
+  ensureEnergyMapLayer();
+
+  const buildingFocus = state.mapFocusMode === "buildings";
+  const showMicro = !buildingFocus && state.activePanel === "microclimate" && Boolean(state.microclimate);
+  const showEnergyGrid =
+    !buildingFocus &&
+    state.activePanel === "energy" &&
+    ["grid", "combined"].includes(state.activeEnergyMode) &&
+    Boolean(state.energy);
+  const showBuildings =
+    checkboxChecked("toggleBuildings") &&
+    !showMicro &&
+    (buildingFocus ||
+      state.activePanel === "layers" ||
+      (state.activePanel === "energy" && ["building", "combined"].includes(state.activeEnergyMode)));
+  const showOverviewGrids =
+    !buildingFocus &&
+    !showMicro &&
+    !showEnergyGrid &&
+    ["overview", "layers"].includes(state.activePanel);
+  const showOpportunity = showOverviewGrids && checkboxChecked("toggleOpportunity");
+  const showAllocation = showOverviewGrids && checkboxChecked("toggleAllocation");
+
+  setLayerVisibility(["boundary-fill", "boundary-line"], checkboxChecked("toggleBoundary"));
+  setLayerVisibility(["opportunity-fill", "opportunity-line", "opportunity-selected-line"], showOpportunity);
+  setLayerVisibility(["allocation-fill", "allocation-line", "allocation-selected-line", "agent-highlight-fill"], showAllocation);
+  setLayerVisibility(["allocation-labels"], showAllocation && checkboxChecked("toggleLabels", false));
+  setLayerVisibility(["building-fill", "building-line", "building-selected-line"], showBuildings);
+  setLayerVisibility(["microclimate-fill", "microclimate-line", "microclimate-selected-line"], showMicro);
+  setLayerVisibility(["energy-grid-fill", "energy-grid-line", "energy-grid-selected-line"], showEnergyGrid);
+
   if (state.map.getLayer("microclimate-fill")) {
     state.map.setPaintProperty("microclimate-fill", "fill-color", microclimateColorExpression());
+    state.map.setPaintProperty("microclimate-fill", "fill-opacity", state.microGridOpacity);
   }
-  if (visible && state.map.getLayer("microclimate-selected-line")) {
+  if (showMicro && state.map.getLayer("microclimate-selected-line")) {
     const id = state.selectedMicroclimate ? Number(state.selectedMicroclimate.properties.grid_id) : -1;
     state.map.setFilter("microclimate-selected-line", ["==", ["get", "grid_id"], id]);
   }
-}
-
-function syncEnergyLayer() {
-  if (!state.map) return;
-  ensureEnergyMapLayer();
-  const visible = state.activePanel === "energy" && state.activeEnergyMode === "grid" && Boolean(state.energy);
-  setLayerVisibility(["energy-grid-fill", "energy-grid-line", "energy-grid-selected-line"], visible);
   if (state.map.getLayer("energy-grid-fill")) {
     state.map.setPaintProperty("energy-grid-fill", "fill-color", energyColorExpression());
+    state.map.setPaintProperty("energy-grid-fill", "fill-opacity", state.energyGridOpacity);
   }
-  if (visible && state.map.getLayer("energy-grid-selected-line")) {
+  if (showEnergyGrid && state.map.getLayer("energy-grid-selected-line")) {
     const id = state.selectedEnergyGrid ? Number(state.selectedEnergyGrid.properties.grid_id) : -1;
     state.map.setFilter("energy-grid-selected-line", ["==", ["get", "grid_id"], id]);
   }
+  updateBuildingStatus();
+}
+
+function syncMicroclimateLayer() {
+  syncMapLayerVisibility();
+}
+
+function syncEnergyLayer() {
+  syncMapLayerVisibility();
 }
 
 function renderOverview() {
@@ -1281,6 +1339,7 @@ function renderScenarioNarrative() {
 function wireMicroclimateControls() {
   const seasonBox = document.getElementById("microSeasonButtons");
   const metricBox = document.getElementById("microMetricButtons");
+  const opacityInput = document.getElementById("microOpacity");
   seasonBox?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-micro-season]");
     if (!button) return;
@@ -1295,32 +1354,30 @@ function wireMicroclimateControls() {
     renderMicroclimatePanel();
     syncMicroclimateLayer();
   });
+  opacityInput?.addEventListener("input", (event) => {
+    state.microGridOpacity = Number(event.target.value) || 0.68;
+    syncMicroclimateLayer();
+  });
 }
 
 function renderMicroclimatePanel() {
   const data = state.microclimate;
-  const metricGrid = document.getElementById("microMetricGrid");
-  if (!metricGrid) return;
+  const seasonBox = document.getElementById("microSeasonButtons");
+  const metricBox = document.getElementById("microMetricButtons");
+  if (!seasonBox && !metricBox) return;
   if (!data) {
-    metricGrid.innerHTML = `<div class="metric-card wide"><strong>Not loaded</strong><span>Microclimate data were not available.</span></div>`;
-    ["microSeasonButtons", "microMetricButtons", "microNarrative", "wrfSeriesChart", "lczSensitivityList", "fig10Explorer"].forEach((id) => {
-      const node = document.getElementById(id);
-      if (node) node.innerHTML = "";
-    });
+    if (seasonBox) seasonBox.innerHTML = `<button type="button" disabled>Not loaded</button>`;
+    if (metricBox) metricBox.innerHTML = `<button type="button" disabled>Microclimate unavailable</button>`;
     return;
   }
 
   renderMicroSeasonButtons();
   renderMicroMetricButtons();
-  renderMicroMetricCards();
-  renderMicroNarrative();
-  renderWrfSeriesChart();
-  renderLczSensitivityList();
-  renderFig10Explorer();
 }
 
 function renderMicroSeasonButtons() {
   const container = document.getElementById("microSeasonButtons");
+  if (!container || !state.microclimate) return;
   const seasons = state.microclimate.seasons || {};
   container.innerHTML = MICRO_SEASONS.map((season) => {
     const meta = seasons[season] || {};
@@ -1330,6 +1387,7 @@ function renderMicroSeasonButtons() {
 
 function renderMicroMetricButtons() {
   const container = document.getElementById("microMetricButtons");
+  if (!container) return;
   container.innerHTML = Object.entries(MICRO_METRICS)
     .map(
       ([key, metric]) =>
@@ -1339,6 +1397,8 @@ function renderMicroMetricButtons() {
 }
 
 function renderMicroMetricCards() {
+  const node = document.getElementById("microMetricGrid");
+  if (!node || !state.microclimate) return;
   const field = microclimateMetricField();
   const range = microclimateMetricRange(field);
   const metric = MICRO_METRICS[state.activeMicroMetric] || MICRO_METRICS.sensitivity;
@@ -1348,7 +1408,7 @@ function renderMicroMetricCards() {
   const variable = MICRO_METRICS[state.activeMicroMetric]?.kind === "wrf" ? state.activeMicroMetric : "temp";
   const series = state.microclimate.wrfSeries?.[state.activeMicroSeason]?.[variable];
 
-  document.getElementById("microMetricGrid").innerHTML = [
+  node.innerHTML = [
     [formatNumber(range.mean, metric.unit === "%" ? 1 : 2), `mean ${metric.unit} (${seasonLabel})`],
     [formatNumber(range.max, metric.unit === "%" ? 1 : 2), `max ${metric.short.toLowerCase()}`],
     [topLcz ? `${escapeHtml(topLcz.LCZ_label || topLcz.LCZ_name || topLcz.LCZ_code)}` : "n/a", "highest mean LCZ sensitivity"],
@@ -1359,6 +1419,8 @@ function renderMicroMetricCards() {
 }
 
 function renderMicroNarrative() {
+  const node = document.getElementById("microNarrative");
+  if (!node || !state.microclimate) return;
   const metric = MICRO_METRICS[state.activeMicroMetric] || MICRO_METRICS.sensitivity;
   const season = state.microclimate.seasons[state.activeMicroSeason] || {};
   const field = microclimateMetricField();
@@ -1366,7 +1428,6 @@ function renderMicroNarrative() {
   const lisa = (state.microclimate.lisaSummary || []).find(
     (row) => String(row.Season).toLowerCase() === state.activeMicroSeason && row.Cluster_Type === "HH"
   );
-  const node = document.getElementById("microNarrative");
   node.innerHTML = `
     <p><strong>${escapeHtml(metric.label)}</strong> is mapped for the ${escapeHtml(season.label || state.activeMicroSeason)}. The layer uses 500 m grid summaries derived from the previous Shanghai microclimate-energy workflow.</p>
     <p>Current grid range: ${formatNumber(range.min, 2)} to ${formatNumber(range.max, 2)} ${escapeHtml(metric.unit)}. ${lisa ? `LISA HH clusters cover ${formatNumber(lisa.Percent, 1)}% of grids with mean sensitivity ${formatNumber(lisa.Mean_Sensitivity, 1)}%.` : ""}</p>
@@ -1378,6 +1439,7 @@ function renderWrfSeriesChart() {
   const series = state.microclimate.wrfSeries?.[state.activeMicroSeason]?.[variable];
   const metric = MICRO_METRICS[variable];
   const node = document.getElementById("wrfSeriesChart");
+  if (!node) return;
   if (!series || !series.cityMean || !series.cityMean.length) {
     node.innerHTML = `<p class="narrative">WRF time-series data are not loaded.</p>`;
     return;
@@ -1408,9 +1470,11 @@ function renderWrfSeriesChart() {
 }
 
 function renderLczSensitivityList() {
+  const node = document.getElementById("lczSensitivityList");
+  if (!node) return;
   const rows = microLczRowsForSeason().slice(0, 7);
   const max = Math.max(...rows.map((row) => Number(row.S_Mean_Weighted || 0)), 1);
-  document.getElementById("lczSensitivityList").innerHTML = rows
+  node.innerHTML = rows
     .map((row) => {
       const width = (Number(row.S_Mean_Weighted || 0) / max) * 100;
       return `
@@ -1445,6 +1509,7 @@ function renderFig10Explorer() {
   const opportunityCount = state.data.opportunityGeojson.features.length;
   const selectedCount = state.data.allocationGeojson.features.length;
   const node = document.getElementById("fig10Explorer");
+  if (!node) return;
   node.innerHTML = `
     <div class="fig10-card-grid">
       <button type="button" data-fig10-action="allocation">
@@ -1498,14 +1563,17 @@ function microEnergyRowsForSeason() {
 }
 
 function wireEnergyControls() {
-  document.getElementById("energyModeButtons")?.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-energy-mode]");
-    if (!button) return;
-    state.activeEnergyMode = button.dataset.energyMode;
+  document.getElementById("energyModeSelect")?.addEventListener("change", (event) => {
+    state.activeEnergyMode = event.target.value;
     ensureEnergyData();
     renderEnergyPanel();
-    syncEnergyLayer();
-    if (state.activeEnergyMode === "building") focus3DBuildings();
+    if (state.activeEnergyMode === "building") {
+      state.mapFocusMode = "buildings";
+      focus3DBuildings();
+    } else {
+      state.mapFocusMode = "default";
+      syncEnergyLayer();
+    }
   });
   document.getElementById("energySeasonButtons")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-energy-season]");
@@ -1514,41 +1582,46 @@ function wireEnergyControls() {
     renderEnergyPanel();
     syncEnergyLayer();
   });
-  document.getElementById("energyMetricButtons")?.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-energy-metric]");
-    if (!button) return;
-    state.activeEnergyMetric = button.dataset.energyMetric;
+  document.getElementById("energyMetricSelect")?.addEventListener("change", (event) => {
+    state.activeEnergyMetric = event.target.value;
     renderEnergyPanel();
+    syncEnergyLayer();
+  });
+  document.getElementById("energyOpacity")?.addEventListener("input", (event) => {
+    state.energyGridOpacity = Number(event.target.value) || 0.64;
     syncEnergyLayer();
   });
 }
 
 function renderEnergyPanel() {
-  const metricGrid = document.getElementById("energyMetricGrid");
-  if (!metricGrid) return;
-  const clearIds = ["energyModeButtons", "energySeasonButtons", "energyMetricButtons", "energyNarrative", "buildingEnergyEvidence", "energyGridEvidence", "energyTypeList"];
+  const modeSelect = document.getElementById("energyModeSelect");
+  const seasonBox = document.getElementById("energySeasonButtons");
+  const metricSelect = document.getElementById("energyMetricSelect");
+  if (!modeSelect && !seasonBox && !metricSelect) return;
   if (!state.energy) {
     const loading = state.energyPromise ? "Loading" : state.energyError ? "Not loaded" : "Ready";
-    metricGrid.innerHTML = `<div class="metric-card wide"><strong>${loading}</strong><span>${state.energyError || "Open Energy to load building-level TMY and WRF evidence."}</span></div>`;
-    clearIds.forEach((id) => {
-      const node = document.getElementById(id);
-      if (node) node.innerHTML = "";
-    });
+    if (seasonBox) seasonBox.innerHTML = `<button type="button" disabled>${escapeHtml(loading)}</button>`;
+    if (metricSelect) {
+      metricSelect.innerHTML = `<option>${escapeHtml(state.energyError || "Energy evidence will load when this panel opens.")}</option>`;
+      metricSelect.disabled = true;
+    }
     return;
   }
 
-  renderEnergyModeButtons();
+  renderEnergyModeSelect();
   renderEnergySeasonButtons();
-  renderEnergyMetricButtons();
-  renderEnergyMetricCards();
-  renderEnergyNarrative();
-  renderBuildingEnergyEvidence();
-  renderEnergyGridEvidence();
-  renderEnergyTypeList();
+  renderEnergyMetricSelect();
+}
+
+function renderEnergyModeSelect() {
+  const select = document.getElementById("energyModeSelect");
+  if (!select) return;
+  select.value = state.activeEnergyMode;
 }
 
 function renderEnergyModeButtons() {
   const container = document.getElementById("energyModeButtons");
+  if (!container) return;
   container.innerHTML = Object.entries(ENERGY_MODES)
     .map(
       ([key, label]) =>
@@ -1559,6 +1632,7 @@ function renderEnergyModeButtons() {
 
 function renderEnergySeasonButtons() {
   const container = document.getElementById("energySeasonButtons");
+  if (!container || !state.energy) return;
   const seasons = state.energy.seasons || {};
   container.innerHTML = MICRO_SEASONS.map((season) => {
     const meta = seasons[season] || {};
@@ -1566,8 +1640,21 @@ function renderEnergySeasonButtons() {
   }).join("");
 }
 
+function renderEnergyMetricSelect() {
+  const select = document.getElementById("energyMetricSelect");
+  if (!select) return;
+  select.disabled = false;
+  select.innerHTML = Object.entries(ENERGY_METRICS)
+    .map(
+      ([key, metric]) =>
+        `<option value="${key}" ${key === state.activeEnergyMetric ? "selected" : ""}>${escapeHtml(metric.label)}</option>`
+    )
+    .join("");
+}
+
 function renderEnergyMetricButtons() {
   const container = document.getElementById("energyMetricButtons");
+  if (!container) return;
   container.innerHTML = Object.entries(ENERGY_METRICS)
     .map(
       ([key, metric]) =>
@@ -1577,6 +1664,8 @@ function renderEnergyMetricButtons() {
 }
 
 function renderEnergyMetricCards() {
+  const node = document.getElementById("energyMetricGrid");
+  if (!node || !state.energy) return;
   const field = energyMetricField();
   const range = energyMetricRange(field);
   const metric = ENERGY_METRICS[state.activeEnergyMetric] || ENERGY_METRICS.diff_pct;
@@ -1587,7 +1676,7 @@ function renderEnergyMetricCards() {
   const typeTop = energyTypeRowsForSeason()[0];
   const buildingValue = selectedBuildingEnergy ? energyRecordValue(selectedBuildingEnergy, state.activeEnergyMetric) : null;
   const gridValue = selectedGrid ? Number(selectedGrid[field]) : null;
-  document.getElementById("energyMetricGrid").innerHTML = [
+  node.innerHTML = [
     [formatNumber(state.energy.metadata?.building_count, 0), "single-building records"],
     [formatNumber(state.energy.metadata?.grid_count, 0), "500 m energy grids"],
     [
@@ -1605,6 +1694,8 @@ function renderEnergyMetricCards() {
 }
 
 function renderEnergyNarrative() {
+  const node = document.getElementById("energyNarrative");
+  if (!node || !state.energy) return;
   const metric = ENERGY_METRICS[state.activeEnergyMetric] || ENERGY_METRICS.diff_pct;
   const season = state.energy.seasons[state.activeEnergySeason] || {};
   const field = energyMetricField();
@@ -1613,7 +1704,7 @@ function renderEnergyNarrative() {
     state.activeEnergyMode === "grid"
       ? "The map colors 500 m grid aggregates. Click a grid to inspect summed TMY/WRF energy and mean sensitivity."
       : "Click any 3D building footprint to load its exact representative-week TMY, WRF and percentage-difference record.";
-  document.getElementById("energyNarrative").innerHTML = `
+  node.innerHTML = `
     <p><strong>${escapeHtml(metric.label)}</strong> is active for the ${escapeHtml(season.label || state.activeEnergySeason)}. ${modeText}</p>
     <p>Grid range for this metric is ${energyFormatValue(range.min, state.activeEnergyMetric)} to ${energyFormatValue(range.max, state.activeEnergyMetric)}. Positive values indicate higher WRF/microclimate-week energy than TMY.</p>
   `;
@@ -1621,6 +1712,7 @@ function renderEnergyNarrative() {
 
 function renderBuildingEnergyEvidence() {
   const node = document.getElementById("buildingEnergyEvidence");
+  if (!node) return;
   if (!state.selectedBuilding) {
     node.innerHTML = `<div class="micro-row"><span class="micro-row-top"><strong>No building selected</strong><em>${escapeHtml(ENERGY_MODES.building)}</em></span><span>Switch to high zoom and click a 3D building footprint to load one building's TMY-vs-WRF energy record.</span></div>`;
     return;
@@ -1646,6 +1738,7 @@ function renderBuildingEnergyEvidence() {
 
 function renderEnergyGridEvidence() {
   const node = document.getElementById("energyGridEvidence");
+  if (!node) return;
   const selected = state.selectedEnergyGrid ? state.selectedEnergyGrid.properties : null;
   if (selected) {
     node.innerHTML = energyGridRowsHtml([selected], true);
@@ -1656,9 +1749,11 @@ function renderEnergyGridEvidence() {
 }
 
 function renderEnergyTypeList() {
+  const node = document.getElementById("energyTypeList");
+  if (!node) return;
   const rows = energyTypeRowsForSeason().slice(0, 7);
   const max = Math.max(...rows.map((row) => Math.abs(Number(row[`${state.activeEnergySeason}_diff_pct`] || 0))), 1);
-  document.getElementById("energyTypeList").innerHTML = rows
+  node.innerHTML = rows
     .map((row) => {
       const value = Number(row[`${state.activeEnergySeason}_diff_pct`] || 0);
       const width = (Math.abs(value) / max) * 100;
@@ -1873,9 +1968,9 @@ function agentStepObject(agentKey, tool, text, prompt = null, kind = "") {
 }
 
 function renderAgentTrace(steps) {
+  state.lastAgentSteps = steps;
   const container = document.getElementById("agentTrace");
   if (!container) return;
-  state.lastAgentSteps = steps;
   container.innerHTML = steps
     .map((step, index) => {
       const agent = AGENTS[step.agentKey];
@@ -2442,11 +2537,7 @@ function selectBuildingFeature(feature, lngLat) {
   state.selectedFeature = gridFeature || null;
 
   if (state.map && state.map.getLayer("building-selected-line")) {
-    state.map.setFilter("building-selected-line", [
-      "any",
-      ["==", ["get", "bldg_id"], Number(p.bldg_id)],
-      ["==", ["get", "objectid"], Number(p.bldg_id)]
-    ]);
+    state.map.setFilter("building-selected-line", buildingSelectionFilter(p.bldg_id));
   }
   if (state.map && state.map.getLayer("allocation-selected-line")) {
     state.map.setFilter("allocation-selected-line", [
@@ -2572,12 +2663,21 @@ function selectEnergyGridFeature(feature, lngLat) {
 
 function clearBuildingSelection() {
   if (state.map && state.map.getLayer("building-selected-line")) {
-    state.map.setFilter("building-selected-line", [
-      "any",
-      ["==", ["get", "bldg_id"], -1],
-      ["==", ["get", "objectid"], -1]
-    ]);
+    state.map.setFilter("building-selected-line", emptyBuildingSelectionFilter());
   }
+}
+
+function buildingSelectionFilter(bldgId) {
+  const id = String(bldgId ?? "__none__");
+  return [
+    "any",
+    ["==", ["to-string", ["get", "bldg_id"]], id],
+    ["==", ["to-string", ["get", "objectid"]], id]
+  ];
+}
+
+function emptyBuildingSelectionFilter() {
+  return buildingSelectionFilter("__none__");
 }
 
 function normalizeBuildingProperties(raw) {
@@ -2951,6 +3051,8 @@ function renderUnitExamples(gridId) {
 
 function focus3DBuildings() {
   if (!state.map) return;
+  state.mapFocusMode = "buildings";
+  syncMapLayerVisibility();
   const target = state.selectedBuilding
     ? [Number(state.selectedBuilding.properties.center_lon), Number(state.selectedBuilding.properties.center_lat)]
     : featureCenter(state.selectedFeature || state.selectedOpportunity || state.selectedEnergyGrid) || [121.4737, 31.2304];
@@ -2961,6 +3063,7 @@ function focus3DBuildings() {
     bearing: -22,
     duration: 800
   });
+  state.map.once("moveend", updateBuildingStatus);
   updateBuildingStatus();
 }
 
@@ -2979,6 +3082,11 @@ function updateBuildingStatus() {
   }
   if (!state.map.getLayer("building-fill")) {
     node.textContent = state.map.loaded() ? "3D buildings source pending" : "3D buildings loading";
+    return;
+  }
+  if (state.map.getLayoutProperty("building-fill", "visibility") === "none") {
+    node.textContent = "3D buildings ready";
+    node.title = "The tileset layer is loaded and will show in 3D Buildings or Energy building mode.";
     return;
   }
   const minzoom = cfg.minzoom || 11;
@@ -3073,44 +3181,58 @@ function extendBounds(a, b) {
 }
 
 function wireChat() {
-  document.getElementById("closeAgentModal").addEventListener("click", closeAgentModal);
-  document.getElementById("agentModalBackdrop").addEventListener("click", closeAgentModal);
+  document.getElementById("closeAgentModal")?.addEventListener("click", closeAgentModal);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeAgentModal();
   });
-  document.getElementById("saveApiSettings").addEventListener("click", saveApiSettings);
+  document.getElementById("saveApiSettings")?.addEventListener("click", saveApiSettings);
   document.querySelectorAll("[data-agent-prompt]").forEach((button) => {
     button.addEventListener("click", async () => {
-      const prompt = button.dataset.agentPrompt;
-      addChatMessage("user", prompt);
-      renderAgentTrace(buildAgentTrace(prompt));
-      if (prompt.toLowerCase().includes("hotspot")) {
-        highlightAgentHotspots("hotspots");
-      } else {
-        highlightAgentHotspots("selected");
-      }
-      const reply = await answerQuestion(prompt);
-      addChatMessage("assistant", reply);
+      await submitAgentMessage(button.dataset.agentPrompt || "");
     });
   });
-  document.getElementById("chatForm").addEventListener("submit", async (event) => {
+  document.getElementById("chatForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const input = document.getElementById("chatInput");
     const message = input.value.trim();
     if (!message) return;
     input.value = "";
-    addChatMessage("user", message);
-    renderAgentTrace(buildAgentTrace(message));
-    if (message.toLowerCase().includes("hotspot")) {
-      highlightAgentHotspots("hotspots");
-    }
-    const reply = await answerQuestion(message);
-    addChatMessage("assistant", reply);
+    await submitAgentMessage(message);
   });
   addChatMessage(
     "assistant",
-    "Select a building, opportunity grid, or selected allocation grid, then ask about retrofit priority, constraints, budget sensitivity, semantic confidence, or the 10-model benchmark. If no secure proxy is configured, I use a deterministic local agent over the loaded research data."
+    "Ask about a selected Shanghai building, grid, microclimate layer, energy response, retrofit strategy, or the 10-model benchmark. I will ground the reply in the loaded platform evidence."
   );
+}
+
+async function submitAgentMessage(message) {
+  const clean = String(message || "").trim();
+  if (!clean) return;
+  addChatMessage("user", clean);
+  setAgentThinking("Reading the selected map context and platform evidence.");
+  renderAgentTrace(buildAgentTrace(clean));
+  if (clean.toLowerCase().includes("hotspot")) {
+    highlightAgentHotspots("hotspots");
+  } else {
+    highlightAgentHotspots("selected");
+  }
+  setAgentThinking("Querying the secure DeepSeek agent service on Render.");
+  const reply = await answerQuestion(clean);
+  setAgentThinking("Composing an evidence-grounded decision response.");
+  addChatMessage("assistant", reply);
+  window.setTimeout(() => setAgentThinking(""), 650);
+}
+
+function setAgentThinking(text) {
+  const node = document.getElementById("agentThinking");
+  if (!node) return;
+  if (!text) {
+    node.classList.add("hidden");
+    node.textContent = "";
+    return;
+  }
+  node.classList.remove("hidden");
+  node.textContent = text;
 }
 
 function openAgentModal() {
@@ -3127,17 +3249,25 @@ function closeAgentModal() {
 }
 
 function restoreApiSettings() {
-  document.getElementById("apiKeyInput").value = localStorage.getItem(STORAGE.apiKey) || "";
-  document.getElementById("apiEndpointInput").value =
-    localStorage.getItem(STORAGE.apiEndpoint) || (CONFIG.llm && CONFIG.llm.endpoint) || "";
-  document.getElementById("apiModelInput").value =
-    localStorage.getItem(STORAGE.apiModel) || (CONFIG.llm && CONFIG.llm.model) || "";
+  const keyInput = document.getElementById("apiKeyInput");
+  const endpointInput = document.getElementById("apiEndpointInput");
+  const modelInput = document.getElementById("apiModelInput");
+  if (keyInput) keyInput.value = localStorage.getItem(STORAGE.apiKey) || "";
+  if (endpointInput) {
+    endpointInput.value = localStorage.getItem(STORAGE.apiEndpoint) || (CONFIG.llm && CONFIG.llm.endpoint) || "";
+  }
+  if (modelInput) {
+    modelInput.value = localStorage.getItem(STORAGE.apiModel) || (CONFIG.llm && CONFIG.llm.model) || "";
+  }
 }
 
 function saveApiSettings() {
-  localStorage.setItem(STORAGE.apiKey, document.getElementById("apiKeyInput").value.trim());
-  localStorage.setItem(STORAGE.apiEndpoint, document.getElementById("apiEndpointInput").value.trim());
-  localStorage.setItem(STORAGE.apiModel, document.getElementById("apiModelInput").value.trim());
+  const keyInput = document.getElementById("apiKeyInput");
+  const endpointInput = document.getElementById("apiEndpointInput");
+  const modelInput = document.getElementById("apiModelInput");
+  if (keyInput) localStorage.setItem(STORAGE.apiKey, keyInput.value.trim());
+  if (endpointInput) localStorage.setItem(STORAGE.apiEndpoint, endpointInput.value.trim());
+  if (modelInput) localStorage.setItem(STORAGE.apiModel, modelInput.value.trim());
   addChatMessage("assistant", "Settings saved in this browser. The API key is not committed to the repository.");
 }
 
@@ -3437,6 +3567,7 @@ function taskShortLabel(task) {
 
 function addChatMessage(role, text) {
   const log = document.getElementById("chatLog");
+  if (!log) return;
   const node = document.createElement("div");
   node.className = `message ${role}`;
   node.textContent = text;
