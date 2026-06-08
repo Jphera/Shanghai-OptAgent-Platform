@@ -2081,8 +2081,174 @@ function energyFormatValue(value, metric = state.activeEnergyMetric) {
 function renderEvidence() {
   renderModelBenchmark();
   renderArchetypeExplorer();
+  safeRender(renderParetoExplorer);
   renderPolicyExplorer();
   renderBudgetChart();
+  safeRender(renderFullYearValidation);
+  safeRender(renderIndependenceExplorer);
+}
+
+// Isolate the newly added §3.3/§3.5/§3.6 evidence blocks so a data/render issue in any
+// of them can never abort renderEvidence() (and therefore init()/the map).
+function safeRender(fn) {
+  try {
+    fn();
+  } catch (error) {
+    console.warn("Evidence block render failed:", error);
+  }
+}
+
+// §3.3 / Fig.4 — NSGA-II Pareto front. The 1.0B RMB run yields 140 budget-bound
+// solutions; this surfaces the carbon-vs-coverage trade-off instead of a single point.
+function renderParetoExplorer() {
+  const container = document.getElementById("paretoExplorer");
+  if (!container) return;
+  const rows = (state.data.paretoFront || []).filter(
+    (row) => Number.isFinite(Number(row.annual_carbon_reduction_tco2))
+  );
+  if (!rows.length) {
+    container.innerHTML = `<p class="narrative">Pareto front data are not loaded.</p>`;
+    return;
+  }
+  const sorted = rows.slice().sort(
+    (a, b) => Number(b.annual_carbon_reduction_tco2 || 0) - Number(a.annual_carbon_reduction_tco2 || 0)
+  );
+  const best = sorted[0];
+  const maxCarbon = Number(sorted[0].annual_carbon_reduction_tco2 || 0);
+  const step = Math.max(1, Math.floor(sorted.length / 7));
+  const sample = sorted.filter((_, index) => index % step === 0).slice(0, 8);
+  container.innerHTML = `
+    <p class="narrative">
+      ${formatNumber(sorted.length)} Pareto solutions at ~1.0&nbsp;billion&nbsp;RMB. Best-carbon solution:
+      <strong>${formatNumber(maxCarbon / 1000, 1)} ktCO₂/yr</strong> across
+      ${formatNumber(best.selected_buildings || 0)} buildings, ${formatNumber(best.selected_units || 0)} units.
+    </p>
+    ${sample
+      .map((row) => {
+        const carbon = Number(row.annual_carbon_reduction_tco2 || 0);
+        const width = maxCarbon ? (carbon / maxCarbon) * 100 : 0;
+        const share = Number(row.largest_strategy_budget_share || 0) * 100;
+        return `
+          <div class="bar-row">
+            <span>${formatNumber(row.selected_buildings || 0)} bldg</span>
+            <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
+            <span>${formatNumber(carbon / 1000, 1)} kt · cap ${formatNumber(share, 0)}%</span>
+          </div>
+        `;
+      })
+      .join("")}
+  `;
+}
+
+// §3.5 / Fig.18 — full-year TMY EUI validation vs Shanghai 2023 public-building monitoring.
+function renderFullYearValidation() {
+  const container = document.getElementById("fullYearValidation");
+  if (!container) return;
+  const rows = state.data.publicValidation || [];
+  if (!rows.length) {
+    container.innerHTML = `<p class="narrative">Full-year validation data are not loaded.</p>`;
+    return;
+  }
+  const allStock = rows.find((row) => /all simulated/i.test(row.validation_scope || ""));
+  const headline = allStock
+    ? `<p class="narrative">City full-year TMY baseline: <strong>${formatNumber(
+        Number(allStock.annual_electricity_GWh || 0) / 1000,
+        1
+      )} TWh/yr</strong>, ${formatNumber(allStock.eui_kwh_m2, 1)} kWh/m² mean EUI across
+      ${formatNumber(allStock.buildings || 0)} buildings.</p>`
+    : "";
+  container.innerHTML = `
+    ${headline}
+    <div class="policy-list">
+      ${rows
+        .map((row) => {
+          const vs = row.eui_vs_shanghai_public_pct;
+          const vsText =
+            vs === null || vs === undefined || vs === ""
+              ? "reference"
+              : `${Number(vs) >= 0 ? "+" : ""}${formatNumber(vs, 1)}% vs SH public`;
+          return `
+            <div class="policy-row">
+              <span class="policy-row-top">
+                <strong>${row.validation_scope || "scope"}</strong>
+                <span>${formatNumber(row.eui_kwh_m2, 1)} kWh/m²</span>
+              </span>
+              <span>${formatNumber(row.buildings || 0)} buildings · ${formatNumber(
+            row.floor_area_Mm2 || 0,
+            1
+          )} Mm² · ${vsText}</span>
+            </div>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+// §3.6 / Fig.16 — independence: common-objective regret across portfolios (incl. MILP
+// baselines, §3.3) plus the strategy-assignment driver strengths.
+function renderIndependenceExplorer() {
+  const container = document.getElementById("independenceExplorer");
+  if (!container) return;
+  const portfolios = state.data.independenceAblation || [];
+  const drivers = state.data.strategyDrivers || [];
+  if (!portfolios.length && !drivers.length) {
+    container.innerHTML = `<p class="narrative">Independence and driver data are not loaded.</p>`;
+    return;
+  }
+  const sortedPortfolios = portfolios
+    .slice()
+    .sort(
+      (a, b) =>
+        Number(b.annual_carbon_ktco2_common_eval || 0) - Number(a.annual_carbon_ktco2_common_eval || 0)
+    );
+  const portfolioHtml = sortedPortfolios
+    .map((row) => {
+      const regret = Number(row.regret_vs_nsga2_ktco2 || 0);
+      const isBest = /nsga-?ii best/i.test(row.portfolio_label || "");
+      const capPass = row.policy_cap_pass === true || row.policy_cap_pass === "True";
+      const capLabel = capPass
+        ? `<span style="color:#167a75;font-weight:600;">cap ✓</span>`
+        : `<span style="color:#bd4a42;font-weight:600;">cap ✗</span>`;
+      const regretLabel = isBest
+        ? `<span style="color:#167a75;font-weight:600;">reference</span>`
+        : `regret ${regret >= 0 ? "+" : ""}${formatNumber(regret, 1)} kt`;
+      return `
+        <div class="policy-row">
+          <span class="policy-row-top">
+            <strong>${row.portfolio_label || row.portfolio_code}</strong>
+            <span>${formatNumber(row.annual_carbon_ktco2_common_eval, 1)} kt/yr</span>
+          </span>
+          <span>${formatNumber(row.selected_buildings || 0)} buildings · ${regretLabel} · ${capLabel}</span>
+        </div>
+      `;
+    })
+    .join("");
+  const maxStrength = Math.max(...drivers.map((row) => Number(row.driver_strength) || 0), 0.0001);
+  const driverHtml = drivers
+    .slice(0, 8)
+    .map((row) => {
+      const strength = Number(row.driver_strength || 0);
+      const width = (strength / maxStrength) * 100;
+      return `
+        <div class="bar-row">
+          <span>${row.driver}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
+          <span>${formatNumber(strength, 2)}</span>
+        </div>
+      `;
+    })
+    .join("");
+  container.innerHTML = `
+    <p class="narrative">
+      All portfolios re-scored under the proposed refined-microclimate objective. NSGA-II best is the reference;
+      energy-only collapses to one strategy (cap ✗), confirming the agentic workflow adds a decision layer rather than
+      re-plotting the diagnostic maps.
+    </p>
+    <div class="policy-list">${portfolioHtml}</div>
+    <div class="list-item"><strong>What drives strategy assignment</strong></div>
+    ${driverHtml}
+  `;
 }
 
 function renderAgentWorkbench() {
@@ -3498,7 +3664,11 @@ async function submitAgentMessage(message) {
   try {
     await answerQuestion(clean, assistantNode);
   } catch (error) {
-    setChatMessageText(assistantNode, `The agent call failed, so I used the local platform evidence.\n\n${localAgentAnswer(clean)}`);
+    const detail = error && error.message ? ` (${error.message})` : "";
+    setChatMessageText(
+      assistantNode,
+      `The agent call failed${detail}, so I used the local platform evidence.\n\n${localAgentAnswer(clean)}`
+    );
   } finally {
     assistantNode.classList.remove("streaming");
     window.setTimeout(() => setAgentThinking(""), 650);

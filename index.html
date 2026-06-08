@@ -55,10 +55,16 @@
         </header>
 
         <div class="panel-section active" id="panel-overview">
+          <p class="eyebrow">Prescription layer · §3.1&ndash;§3.4</p>
           <div class="metric-grid" id="metricGrid"></div>
           <div class="control-block">
-            <label for="scenarioSelect">Model comparison</label>
+            <label for="scenarioSelect">Model comparison (S0&ndash;S6 ablation)</label>
             <select id="scenarioSelect"></select>
+            <p class="summary-text">
+              These entries are the paper's ablation configurations (old vs refined semantics, TMY vs microclimate,
+              energy-only, deep-retrofit), not independent policy scenarios. The proposed run is
+              <strong>S3 refined-microclimate agentic</strong>.
+            </p>
           </div>
           <div class="control-block">
             <div class="section-title">Selected comparison</div>
@@ -96,7 +102,7 @@
 
         <div class="panel-section" id="panel-microclimate">
           <div class="microclimate-head">
-            <p class="eyebrow">Previous paper evidence</p>
+            <p class="eyebrow">Paper&nbsp;4 diagnostic substrate · feeds §3.2</p>
             <h2>Representative-week microclimate</h2>
           </div>
           <div class="control-block">
@@ -139,7 +145,7 @@
 
         <div class="panel-section" id="panel-energy">
           <div class="microclimate-head">
-            <p class="eyebrow">Previous paper evidence</p>
+            <p class="eyebrow">Paper&nbsp;4 diagnostic substrate · feeds §3.2 / §3.5</p>
             <h2>Building energy response</h2>
           </div>
           <div class="control-block">
@@ -180,26 +186,46 @@
 
         <div class="panel-section" id="panel-evidence">
           <div class="control-block">
-            <div class="section-title">Interactive 10-model benchmark</div>
-            <div id="benchmarkExplorer" class="benchmark-explorer"></div>
+            <p class="eyebrow">Results evidence, mapped to the paper</p>
+            <p class="summary-text">
+              Each block below corresponds to a Results subsection (§3.1&ndash;§3.6) and a paper figure. OptAgent
+              <strong>orchestrates and explains</strong> these results; the energy and carbon numbers themselves come
+              from UBEM-derived scoring, NSGA-II/MILP optimization and full-year EnergyPlus validation, not from the LLM.
+            </p>
           </div>
           <div class="control-block">
-            <div class="section-title">Building-type retrofit ranking</div>
+            <div class="section-title">Building-type retrofit ranking <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.1 · Fig.15</span></div>
             <div id="archetypeExplorer" class="archetype-explorer"></div>
             <figure class="evidence-figure">
               <img src="./assets/figures/fig15_archetype_strategy_rank_heatmap.png" alt="Archetype-level strategy priority heatmap" />
             </figure>
           </div>
           <div class="control-block">
-            <div class="section-title">Policy cost and equity evidence</div>
+            <div class="section-title">NSGA-II Pareto front <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.3 · Fig.4</span></div>
+            <div id="paretoExplorer" class="pareto-explorer"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Interactive 10-model benchmark <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.3 · Fig.13</span></div>
+            <div id="benchmarkExplorer" class="benchmark-explorer"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Policy cost and equity evidence <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.4 · Fig.12</span></div>
             <div id="policyExplorer" class="policy-explorer"></div>
             <figure class="evidence-figure">
               <img src="./assets/figures/fig12_policy_translation_macc_equity.png" alt="Policy translation, MACC and spatial equity evidence" />
             </figure>
           </div>
           <div class="control-block">
-            <div class="section-title">Budget sensitivity</div>
+            <div class="section-title">Budget sensitivity <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.4 · Fig.6</span></div>
             <div id="budgetChart" class="bar-chart"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Full-year EUI validation <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.5 · Fig.18</span></div>
+            <div id="fullYearValidation" class="validation-explorer"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Independence &amp; strategy drivers <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.6 · Fig.16</span></div>
+            <div id="independenceExplorer" class="independence-explorer"></div>
           </div>
         </div>
       </section>
@@ -242,6 +268,11 @@
             </div>
             <button id="closeAgentModal" type="button" title="Close">Close</button>
           </header>
+          <p class="agent-disclaimer" style="margin:0 0 10px;font-size:12px;line-height:1.5;color:#5b6b67;">
+            OptAgent chats naturally and answers questions about the platform and paper, grounding replies in the loaded
+            Shanghai evidence. It is an orchestration and explanation layer &mdash; energy/carbon numbers come from the
+            UBEM&nbsp;+&nbsp;NSGA-II/MILP&nbsp;+&nbsp;EnergyPlus pipeline, not from the model.
+          </p>
           <div id="agentThinking" class="agent-thinking hidden"></div>
           <div id="chatLog" class="chat-log" aria-live="polite"></div>
           <form id="chatForm" class="chat-form">

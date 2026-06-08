@@ -12,6 +12,8 @@ SPATIAL = RESULTS / "intervention_and_spatial_analysis"
 BENCHMARK = RESULTS / "agent_model_benchmark"
 FULL_YEAR = RESULTS / "full_year_validation"
 ARCHETYPE = RESULTS / "archetype_strategy_analysis"
+INDEP = RESULTS / "independence_ablation"
+NSGA2 = RESULTS / "nsga2"
 FIGURES = SOURCE_ROOT / "results" / "figures_core_research"
 OUT = Path(__file__).resolve().parents[1] / "data" / "shanghai-platform-data.json"
 DEFAULT_SCENARIO_ID = "S3_proposed_refined_microclimate_agentic"
@@ -335,6 +337,11 @@ def build_data():
     archetype_rank_matrix = load_optional_records(ARCHETYPE / "archetype_strategy_rank_matrix.csv")
     policy_strategy_macc = load_optional_records(SPATIAL / "policy_translation_strategy_macc.csv")
     policy_district_fairness = load_optional_records(SPATIAL / "policy_translation_district_fairness.csv")
+    # §3.6 independence/ablation + driver analysis (Fig.16) and §3.3 NSGA-II Pareto (Fig.4).
+    # decision_regret_ablation_common_objective.csv also carries the MILP baselines used in §3.3.
+    independence_ablation = load_optional_records(INDEP / "decision_regret_ablation_common_objective.csv")
+    strategy_drivers = load_optional_records(INDEP / "strategy_assignment_driver_strength.csv")
+    pareto_front = load_optional_records(NSGA2 / "nsga2_pareto_summary.csv")
 
     public_validation = None
     validation_path = FULL_YEAR / "public_building_eui_carbon_validation.csv"
@@ -370,6 +377,9 @@ def build_data():
         "archetypeStrategyRankMatrix": archetype_rank_matrix,
         "policyStrategyMacc": policy_strategy_macc,
         "policyDistrictFairness": policy_district_fairness,
+        "independenceAblation": independence_ablation,
+        "strategyDrivers": strategy_drivers,
+        "paretoFront": pareto_front,
         "figureCaptions": {
             "fig12": read_text_if_exists(FIGURES / "fig12_policy_translation_macc_equity_caption.txt"),
             "fig15": read_text_if_exists(FIGURES / "fig15_archetype_strategy_rank_heatmap_caption.txt"),
