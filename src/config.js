@@ -7,6 +7,7 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
   dataUrl: "./data/shanghai-platform-data.json",
   microclimateDataUrl: "./data/microclimate-platform-data.json",
   energyDataUrl: "./data/energy-platform-data.json",
+  buildingSemanticUrl: "./data/building-semantic-index.json",
   initialView: {
     center: [121.4903, 31.2397],
     zoom: 14.55,

@@ -170,8 +170,14 @@
             <span class="control-label">Step 2: Select Representative Week</span>
             <div id="energySeasonButtons" class="segmented compact three"></div>
           </div>
+          <div class="control-block">
+            <label class="control-label" for="energyTypeSelect">Step 3: Select Building Types</label>
+            <select id="energyTypeSelect">
+              <option value="all" selected>All building types</option>
+            </select>
+          </div>
           <div class="control-block metric-block">
-            <label class="control-label" for="energyMetricSelect">Step 3: Select Energy Use Layer</label>
+            <label class="control-label" for="energyMetricSelect">Energy Use (weekly simulation data, kWh/week)</label>
             <select id="energyMetricSelect"></select>
           </div>
           <div class="control-block">
@@ -188,6 +194,10 @@
               Quantitative evidence behind the Shanghai retrofit allocation. OptAgent only orchestrates and explains
               these results &mdash; the energy and carbon numbers come from the UBEM + NSGA-II/MILP + EnergyPlus pipeline.
             </p>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Selected map evidence</div>
+            <div id="evidenceSelection" class="evidence-selection"></div>
           </div>
           <div class="control-block">
             <div class="section-title">Building-type retrofit ranking</div>
@@ -248,15 +258,6 @@
           <button id="askAgentButton" type="button" class="primary-tool">Ask OptAgent</button>
           <span id="buildingStatus" class="building-status">3D buildings loading</span>
         </div>
-        <div class="height-legend" id="heightLegend" aria-label="Building height legend">
-          <h4>Building height</h4>
-          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#b5179e"></span>&ge; 260 m</div>
-          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#8a3fc0"></span>~ 160 m</div>
-          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#5a52c9"></span>~ 90 m</div>
-          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#3f72d6"></span>~ 45 m</div>
-          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#36a7e0"></span>~ 20 m</div>
-          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#5ad1e6"></span>&le; 8 m</div>
-        </div>
       </section>
 
       <aside class="inspector" aria-label="Selected grid analysis">
@@ -267,6 +268,7 @@
         <div id="selectedSummary" class="selected-summary"></div>
         <div class="agent-steps" id="agentSteps"></div>
         <div class="unit-examples" id="unitExamples"></div>
+        <div class="inspector-legend" id="mapLegend" aria-label="Active map legend"></div>
       </aside>
 
       <div id="agentModal" class="agent-modal hidden" role="dialog" aria-modal="false" aria-labelledby="agentModalTitle">
