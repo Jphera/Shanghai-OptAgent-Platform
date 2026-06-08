@@ -291,13 +291,16 @@ async def stream_deepseek(message: str, model: str, context: dict[str, Any], api
 
 def deepseek_request_body(message: str, model: str, context: dict[str, Any], stream: bool) -> dict[str, Any]:
     system = (
-        "You are Shanghai OptAgent, a backend research assistant for an urban-scale "
-        "microclimate-aware decarbonization platform. Answer using only the supplied "
-        "platform context. Distinguish selected NSGA-II allocation grids from full-city "
-        "opportunity grids, WRF/LCZ evidence grids, and TMY-vs-WRF energy evidence. Be concise, quantitative, and "
-        "explicit about uncertainty. If the user has not selected a map object, answer at the city/platform/paper level; "
-        "do not ask them to select a grid unless the question truly needs object-level evidence. "
-        "Write like a capable research copilot in the user's language. Avoid canned button-style answers."
+        "You are Shanghai OptAgent, a conversational research copilot embedded in an "
+        "urban-scale microclimate-aware building decarbonization platform. You can chat normally, "
+        "clarify vague questions, and answer general user questions. When the question concerns the "
+        "Shanghai platform, the paper, buildings, WRF microclimate, TMY-vs-WRF energy, retrofit "
+        "strategies, NSGA-II allocation, benchmark models, or selected map objects, ground the answer "
+        "in the supplied platform context and say when evidence is missing. Distinguish selected "
+        "NSGA-II allocation grids from full-city opportunity grids, WRF/LCZ evidence grids, and "
+        "TMY-vs-WRF energy evidence. If the user has not selected a map object, answer at the "
+        "city/platform/paper level; do not ask them to select a grid unless object-level evidence is "
+        "truly required. Write in the user's language, naturally and helpfully, not as a canned button response."
     )
     return {
         "model": model or "deepseek-chat",
@@ -314,6 +317,7 @@ def deepseek_request_body(message: str, model: str, context: dict[str, Any], str
 
 
 def local_answer(message: str, context: dict[str, Any]) -> str:
+    clean_message = message.strip()
     scenario = context.get("scenario") or {}
     micro = context.get("selectedMicroclimateGrid") or {}
     energy = context.get("selectedEnergyGrid") or {}
@@ -324,6 +328,13 @@ def local_answer(message: str, context: dict[str, Any]) -> str:
     core = context.get("coreMetrics") or {}
     micro_meta = context.get("microclimateMetadata") or {}
     energy_meta = context.get("energyMetadata") or {}
+
+    if len(clean_message) <= 2 or clean_message.lower() in {"hi", "hello", "hey", "你好"}:
+        return (
+            "我在。你可以直接像和 GPT 聊天一样问我：例如“这个平台的核心创新是什么”、"
+            "“WRF 微气候证据怎样进入优化”、或“这栋楼为什么适合某类改造”。"
+            "如果你点中了建筑或网格，我会自动把那个对象的证据加入回答。"
+        )
 
     if micro:
         season = (context.get("microclimateView") or {}).get("season", "cooling")

@@ -15,16 +15,19 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
   },
   llm: {
     providerName: "DeepSeek",
-    proxyEndpoint: window.location.hostname.includes("onrender.com") ? "/api/chat" : "",
+    proxyEndpoint: window.location.hostname.includes("onrender.com")
+      ? "/api/chat"
+      : "https://shanghai-optagent-platform.onrender.com/api/chat",
     endpoint: "https://api.deepseek.com/chat/completions",
-    model: "deepseek-chat"
+    model: "deepseek-reasoner",
+    forceModel: true
   },
   buildingTileset: {
     enabled: true,
     sourceUrl: "mapbox://jpyjpy.rinkgkw6s4rz",
     sourceLayer: "61360c70f5ca9330b9e7",
     minzoom: 10.8,
-    note: "Mapbox Studio tileset 11_shanghai_buildings_3d_height. Source-layer id was read from TileJSON vector_layers."
+    note: "Mapbox Studio tileset 11_shanghai_buildings_3d_height. Published maxzoom is 16; source-layer id was read from TileJSON vector_layers."
   },
   microclimateTileset: {
     enabled: true,

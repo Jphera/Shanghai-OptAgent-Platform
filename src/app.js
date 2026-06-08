@@ -3477,7 +3477,7 @@ function wireChat() {
   });
   addChatMessage(
     "assistant",
-    "Ask about a selected Shanghai building, grid, microclimate layer, energy response, retrofit strategy, or the 10-model benchmark. I will ground the reply in the loaded platform evidence."
+    "Hi, I am OptAgent. You can chat normally, ask about the Shanghai paper and platform, or click a building/grid to add object-level evidence. I will use DeepSeek Reasoner with the loaded WRF, energy and optimization context."
   );
 }
 
@@ -3539,7 +3539,9 @@ function restoreApiSettings() {
     endpointInput.value = localStorage.getItem(STORAGE.apiEndpoint) || (CONFIG.llm && CONFIG.llm.endpoint) || "";
   }
   if (modelInput) {
-    modelInput.value = localStorage.getItem(STORAGE.apiModel) || (CONFIG.llm && CONFIG.llm.model) || "";
+    modelInput.value = CONFIG.llm?.forceModel
+      ? CONFIG.llm.model || ""
+      : localStorage.getItem(STORAGE.apiModel) || (CONFIG.llm && CONFIG.llm.model) || "";
   }
 }
 
@@ -3555,7 +3557,9 @@ function saveApiSettings() {
 
 async function answerQuestion(message, targetNode = null) {
   const proxyEndpoint = CONFIG.llm && CONFIG.llm.proxyEndpoint;
-  const model = localStorage.getItem(STORAGE.apiModel) || (CONFIG.llm && CONFIG.llm.model);
+  const model = CONFIG.llm?.forceModel
+    ? CONFIG.llm.model
+    : localStorage.getItem(STORAGE.apiModel) || (CONFIG.llm && CONFIG.llm.model);
   if (proxyEndpoint && model) {
     if (targetNode && window.ReadableStream) {
       try {
@@ -3780,6 +3784,7 @@ function buildContextPrompt() {
 function localAgentAnswer(message) {
   const text = message.toLowerCase();
   const raw = message;
+  const clean = message.trim();
   const asksHotspot = hasAny(text, raw, ["hotspot", "\u70ed\u70b9"]);
   const asksCompare = hasAny(text, raw, ["compare", "baseline", "\u5bf9\u6bd4", "\u57fa\u7ebf"]);
   const asksBuilding = hasAny(text, raw, ["building", "confidence", "\u5efa\u7b51", "\u7f6e\u4fe1", "\u8bed\u4e49"]);
@@ -3789,6 +3794,10 @@ function localAgentAnswer(message) {
   const asksEnergy = hasAny(text, raw, ["energy", "tmy", "eui", "\u80fd\u8017", "\u80fd\u6e90"]);
   const asksBudget = hasAny(text, raw, ["budget", "\u9884\u7b97"]);
   const asksBenchmark = hasAny(text, raw, ["model", "benchmark", "\u6a21\u578b", "\u6d4b\u8bc4"]);
+
+  if (clean.length <= 2 || ["hi", "hello", "hey", "\u4f60\u597d"].includes(clean.toLowerCase())) {
+    return "我在。你可以像和 GPT 聊天一样直接问我平台、论文、WRF 微气候、建筑能耗或某个点击对象的问题；如果你点中了建筑或网格，我会自动把它作为上下文。";
+  }
 
   if (asksEnergy && state.selectedEnergyGrid) {
     const p = state.selectedEnergyGrid.properties;
