@@ -300,7 +300,7 @@ def deepseek_request_body(message: str, model: str, context: dict[str, Any], str
         "NSGA-II allocation grids from full-city opportunity grids, WRF/LCZ evidence grids, and "
         "TMY-vs-WRF energy evidence. If the user has not selected a map object, answer at the "
         "city/platform/paper level; do not ask them to select a grid unless object-level evidence is "
-        "truly required. Write in the user's language, naturally and helpfully, not as a canned button response."
+        "truly required. Write in English only, naturally and helpfully, not as a canned button response."
     )
     return {
         "model": model or "deepseek-chat",
@@ -329,13 +329,11 @@ def local_answer(message: str, context: dict[str, Any]) -> str:
     micro_meta = context.get("microclimateMetadata") or {}
     energy_meta = context.get("energyMetadata") or {}
 
-    if len(clean_message) <= 2 or clean_message.lower() in {"hi", "hello", "hey", "你好"}:
+    if len(clean_message) <= 2 or clean_message.lower() in {"hi", "hello", "hey"}:
         return (
-            "我在。你可以直接像和 GPT 聊天一样问我：例如“这个平台的核心创新是什么”、"
-            "“WRF 微气候证据怎样进入优化”、或“这栋楼为什么适合某类改造”。"
-            "如果你点中了建筑或网格，我会自动把那个对象的证据加入回答。"
+            "I am here. Ask me naturally about the platform, paper, WRF microclimate evidence, "
+            "building energy response, retrofit optimization, or the currently selected map object."
         )
-
     if micro:
         season = (context.get("microclimateView") or {}).get("season", "cooling")
         return (
@@ -354,7 +352,7 @@ def local_answer(message: str, context: dict[str, Any]) -> str:
             )
         return (
             f"Building {building.get('bldg_id') or building.get('objectid')} belongs to grid {building.get('grid_id')}. "
-            f"It is classified as {building.get('coarse_function') or building.get('building_type')} with template "
+            f"It is classified as {building.get('refined_function') or building.get('source_function') or building.get('building_type')} with template "
             f"{building.get('thermal_template')} and confidence {building.get('llm_confidence') or building.get('ml_probability')}."
         )
     if energy:

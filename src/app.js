@@ -103,6 +103,12 @@ const BUILDING_HEIGHT_RAMP = [
   { value: 260, label: ">= 260 m", color: "#b5179e" }
 ];
 
+const PERFORMANCE_DEFAULTS = {
+  buildingMinZoom: 14.05,
+  buildingEnergyMinZoom: 15.6,
+  maxEnergyFeatureStates: 2200
+};
+
 const ENERGY_METRICS = {
   diff_pct: {
     label: "Difference (Microclimate vs non-microclimate)",
@@ -139,6 +145,32 @@ const FUNCTION_COLORS = {
   "工业仓储类": "#bd4a42",
   "交通设施类": "#6c757d"
 };
+
+const FUNCTION_LABEL_TRANSLATIONS = {
+  "住宅类": "Residential",
+  "办公就业类": "Office and employment",
+  "商业服务类": "Commercial service",
+  "公共服务类": "Public service",
+  "学校类": "Education",
+  "工业仓储类": "Industrial and warehouse",
+  "交通设施类": "Transport facility"
+};
+
+const FUNCTION_KEYWORD_TRANSLATIONS = [
+  [["沿街商铺"], "Street-front retail"],
+  [["商场", "购物", "商业"], "Commercial service building"],
+  [["酒店", "宾馆", "住宿"], "Hotel and hospitality"],
+  [["写字楼", "办公", "商务", "公司", "企业"], "Office and business building"],
+  [["产业园", "科技园", "人工智能"], "Innovation park office building"],
+  [["住宅", "小区", "公寓"], "Residential building"],
+  [["学校", "大学", "幼儿园", "培训"], "Education facility"],
+  [["医院", "医疗", "卫生", "康复"], "Healthcare and public service facility"],
+  [["政府", "机关", "村委", "党群"], "Government and public service building"],
+  [["体育", "休闲"], "Sports and recreation facility"],
+  [["工业", "厂房", "仓储", "物流", "制造"], "Industrial or warehouse building"],
+  [["农业", "农林", "基地"], "Agricultural support facility"],
+  [["综合体", "综合"], "Mixed-use building"]
+];
 
 const SCENARIO_META = {
   S0_old_attributes_microclimate: {
@@ -396,7 +428,7 @@ function rowToBuildingEnergy(columns, row) {
     record[column] = row[index];
   });
   if (record.type_code !== null && record.type_code !== undefined) {
-    record.type_label = state.energy?.typeLabels?.[Number(record.type_code)] || null;
+    record.type_label = englishEnergyTypeLabel(state.energy?.typeLabels?.[Number(record.type_code)] || null);
   }
   return record;
 }
@@ -478,6 +510,54 @@ function cachedBuildingSemanticRecord(bldgId) {
   const key = semanticShardKey(bldgId);
   if (!key || !state.buildingSemanticShardCache.has(key)) return null;
   return state.buildingSemanticShardCache.get(key).get(Number(bldgId)) || null;
+}
+
+function containsCjk(value) {
+  return /[\u3400-\u9fff]/.test(String(value || ""));
+}
+
+function englishEnergyTypeLabel(label) {
+  if (!label) return null;
+  if (FUNCTION_LABEL_TRANSLATIONS[label]) return FUNCTION_LABEL_TRANSLATIONS[label];
+  return containsCjk(label) ? "Building type" : String(label);
+}
+
+function englishFunctionLabel(value, fallback = "Building archetype") {
+  const text = String(value || "").trim();
+  if (!text) return fallback;
+  if (FUNCTION_LABEL_TRANSLATIONS[text]) return FUNCTION_LABEL_TRANSLATIONS[text];
+  if (!containsCjk(text)) return text;
+  const match = FUNCTION_KEYWORD_TRANSLATIONS.find(([terms]) => terms.some((term) => text.includes(term)));
+  return match ? match[1] : fallback;
+}
+
+function englishBuildingName(value) {
+  const text = String(value || "").trim();
+  if (!text || containsCjk(text)) return "";
+  return text;
+}
+
+function buildingFunctionDisplay(p) {
+  return englishFunctionLabel(p?.fine_function, englishFunctionLabel(p?.coarse_function, "Building archetype"));
+}
+
+function buildingCoarseDisplay(p) {
+  return englishFunctionLabel(p?.coarse_function, "Building stock");
+}
+
+function buildingContextForPrompt(p) {
+  if (!p) return null;
+  return {
+    bldg_id: p.bldg_id,
+    grid_id: p.grid_id,
+    refined_function: buildingFunctionDisplay(p),
+    source_function: buildingCoarseDisplay(p),
+    age_bin: p.age_bin,
+    thermal_template: p.thermal_template,
+    llm_confidence: p.llm_confidence,
+    height_m: p.height_m,
+    footprint_m2: p.footprint_m2
+  };
 }
 
 function hydrateSelectedBuildingEnergy(bldgId) {
@@ -892,13 +972,13 @@ function addBuildingTilesetLayer() {
         type: "fill-extrusion",
         source: "shanghai-buildings",
         "source-layer": cfg.sourceLayer,
-        minzoom: cfg.minzoom || 12.5,
+        minzoom: buildingMinZoom(),
         paint: {
           "fill-extrusion-color": buildingFillColorExpression(),
           "fill-extrusion-height": ["coalesce", ["to-number", ["get", "height_m"]], 8],
           "fill-extrusion-base": 0,
           "fill-extrusion-opacity": buildingExtrusionOpacityExpression(),
-          "fill-extrusion-vertical-gradient": true
+          "fill-extrusion-vertical-gradient": false
         }
       });
     }
@@ -910,7 +990,7 @@ function addBuildingTilesetLayer() {
         type: "line",
         source: "shanghai-buildings",
         "source-layer": cfg.sourceLayer,
-        minzoom: 16.2,
+        minzoom: Math.max(17.2, buildingMinZoom() + 2.2),
         paint: {
           "line-color": "#314447",
           "line-opacity": 0.16,
@@ -925,7 +1005,7 @@ function addBuildingTilesetLayer() {
         type: "line",
         source: "shanghai-buildings",
         "source-layer": cfg.sourceLayer,
-        minzoom: cfg.minzoom || 12.5,
+        minzoom: buildingMinZoom(),
         filter: emptyBuildingSelectionFilter(),
         paint: {
           "line-color": "#172126",
@@ -987,6 +1067,22 @@ function buildingFunctionColorExpression() {
   Object.entries(FUNCTION_COLORS).forEach(([key, color]) => expression.push(key, color));
   expression.push("#8d989d");
   return expression;
+}
+
+function buildingMinZoom() {
+  return Number(CONFIG.buildingTileset?.minzoom || PERFORMANCE_DEFAULTS.buildingMinZoom);
+}
+
+function buildingEnergyMinZoom() {
+  return Number(CONFIG.buildingTileset?.energyPaintMinzoom || PERFORMANCE_DEFAULTS.buildingEnergyMinZoom);
+}
+
+function maxEnergyFeatureStates() {
+  return Number(CONFIG.buildingTileset?.maxEnergyFeatureStates || PERFORMANCE_DEFAULTS.maxEnergyFeatureStates);
+}
+
+function canRenderBuildingLod() {
+  return Boolean(state.map && state.map.getZoom() >= buildingMinZoom());
 }
 
 function buildingHeightColorExpression() {
@@ -1622,14 +1718,16 @@ function syncMapLayerVisibility() {
   ensureEnergyMapLayer();
 
   const buildingFocus = state.mapFocusMode === "buildings";
+  const buildingLodReady = canRenderBuildingLod();
   const showMicro = !buildingFocus && state.activePanel === "microclimate" && Boolean(state.microclimate);
   const showEnergyGrid =
     !buildingFocus &&
     state.activePanel === "energy" &&
-    ["grid", "combined"].includes(state.activeEnergyMode) &&
+    (["grid", "combined"].includes(state.activeEnergyMode) || !buildingLodReady) &&
     Boolean(state.energy);
   const showBuildings =
     checkboxChecked("toggleBuildings") &&
+    buildingLodReady &&
     !showMicro &&
     (buildingFocus ||
       state.activePanel === "layers" ||
@@ -1730,6 +1828,7 @@ function renderOverview() {
 
   renderStrategyFilter();
   renderScenarioNarrative();
+  renderOptimizationBudgetSummary();
 }
 
 function renderStrategyFilter() {
@@ -1752,6 +1851,27 @@ function renderStrategyFilter() {
       .join("");
   state.strategyFilter = strategies.includes(previous) && counts[previous] ? previous : "all";
   strategySelect.value = state.strategyFilter;
+  renderOptimizationBudgetSummary();
+}
+
+function renderOptimizationBudgetSummary() {
+  const node = document.getElementById("optimizationBudgetSummary");
+  if (!node || !state.data) return;
+  const row = state.data.scenarioSummary.find((item) => item.scenario_id === state.scenarioId);
+  if (!row) return;
+  const selectedGridCount = state.data.allocationGeojson?.features?.length || 0;
+  const opportunityGridCount = state.data.opportunityGeojson?.features?.length || 0;
+  const cards = [
+    [formatCurrency(row.budget_rmb), "optimization budget"],
+    [`${formatNumber(row.budget_used_pct, 1)}%`, "budget used"],
+    [formatNumber(row.selected_buildings, 0), "selected buildings"],
+    [`${formatNumber(Number(row.annual_carbon_reduction_tco2__cluster_weighted_13_14_25 || 0) / 1000, 1)} ktCO2/yr`, "annual abatement"],
+    [formatNumber(selectedGridCount, 0), "selected grids"],
+    [formatNumber(opportunityGridCount, 0), "opportunity grids"]
+  ];
+  node.innerHTML = cards
+    .map(([value, label]) => `<div class="metric-card"><strong>${value}</strong><span>${label}</span></div>`)
+    .join("");
 }
 
 function renderScenarioNarrative() {
@@ -2135,7 +2255,7 @@ function renderEnergyTypeSelect() {
     `<option value="all" ${state.activeEnergyType === "all" ? "selected" : ""}>All building types</option>`,
     ...labels.map(
       (label, index) =>
-        `<option value="${index}" ${String(index) === String(state.activeEnergyType) ? "selected" : ""}>${escapeHtml(label)}</option>`
+        `<option value="${index}" ${String(index) === String(state.activeEnergyType) ? "selected" : ""}>${escapeHtml(englishEnergyTypeLabel(label) || "Building type")}</option>`
     )
   ].join("");
 }
@@ -2187,7 +2307,10 @@ function renderEnergyMetricCards() {
           : energyFormatValue(range.mean, state.activeEnergyMetric),
       selectedBuildingEnergy ? "selected building" : selectedGrid ? "selected grid" : `mean ${metric.short}`
     ],
-    [typeTop ? energyFormatValue(typeTop[`${state.activeEnergySeason}_diff_pct`], "diff_pct") : "n/a", typeTop ? `${typeTop.type_label} type shift` : "type shift"]
+    [
+      typeTop ? energyFormatValue(typeTop[`${state.activeEnergySeason}_diff_pct`], "diff_pct") : "n/a",
+      typeTop ? `${englishEnergyTypeLabel(typeTop.type_label) || "Building type"} shift` : "type shift"
+    ]
   ]
     .map(([value, label]) => `<div class="metric-card"><strong>${value}</strong><span>${label}</span></div>`)
     .join("");
@@ -2231,7 +2354,7 @@ function renderBuildingEnergyEvidence() {
       <div class="micro-row ${season === state.activeEnergySeason ? "active" : ""}">
         <span class="micro-row-top"><strong>${escapeHtml(meta.short || season)}</strong><em>${energyFormatValue(record[`${season}_diff_pct`], "diff_pct")}</em></span>
         <span>TMY ${energyFormatValue(record[`${season}_tmy_kwh`], "tmy_kwh")} | WRF ${energyFormatValue(record[`${season}_wrf_kwh`], "wrf_kwh")}</span>
-        <span>${escapeHtml(record.type_label || building.coarse_function || "type n/a")} | Grid ${escapeHtml(record.grid_id || building.grid_id || "n/a")} | floor area ${formatNumber(record.floor_area_m2, 0)} m2</span>
+        <span>${escapeHtml(record.type_label || buildingFunctionDisplay(building) || "type n/a")} | Grid ${escapeHtml(record.grid_id || building.grid_id || "n/a")} | floor area ${formatNumber(record.floor_area_m2, 0)} m2</span>
       </div>
     `;
   }).join("");
@@ -2260,7 +2383,7 @@ function renderEnergyTypeList() {
       const width = (Math.abs(value) / max) * 100;
       return `
         <div class="micro-row">
-          <span class="micro-row-top"><strong>${escapeHtml(row.type_label)}</strong><em>${energyFormatValue(value, "diff_pct")}</em></span>
+          <span class="micro-row-top"><strong>${escapeHtml(englishEnergyTypeLabel(row.type_label) || "Building type")}</strong><em>${energyFormatValue(value, "diff_pct")}</em></span>
           <span class="rank-track"><span class="rank-fill ${value < 0 ? "cool" : ""}" style="width:${width}%"></span></span>
           <span>${formatNumber(row.building_count, 0)} buildings | TMY ${energyFormatValue(row[`${state.activeEnergySeason}_tmy_kwh`], "tmy_kwh")} | WRF ${energyFormatValue(row[`${state.activeEnergySeason}_wrf_kwh`], "wrf_kwh")}</span>
         </div>
@@ -2356,6 +2479,7 @@ function scheduleVisibleBuildingEnergyHydration(delay = 160) {
 
 async function hydrateVisibleBuildingEnergyStates() {
   if (!state.map || !state.map.getLayer("building-fill") || !isEnergyBuildingColorMode()) return;
+  if (state.map.isMoving?.() || state.map.getZoom() < buildingEnergyMinZoom()) return;
   await ensureEnergyData();
   if (!state.energy) return;
 
@@ -2376,7 +2500,7 @@ async function hydrateVisibleBuildingEnergyStates() {
     if (!Number.isFinite(id) || seen.has(id)) continue;
     seen.add(id);
     ids.push(id);
-    if (ids.length >= 9000) break;
+    if (ids.length >= maxEnergyFeatureStates()) break;
   }
 
   const shardKeys = [...new Set(ids.map((id) => energyShardKey(id)).filter(Boolean))];
@@ -2419,10 +2543,11 @@ function renderEvidenceSelection() {
     const p = mergedBuildingProperties(state.selectedBuilding.properties);
     const energy = cachedBuildingEnergyRecord(p.bldg_id);
     const season = state.activeEnergySeason;
+    const label = buildingFunctionDisplay(p);
     node.innerHTML = `
       <div class="evidence-selection-card">
-        <strong>Building ${escapeHtml(p.bldg_id || "unknown")}${p.building_name ? ` | ${escapeHtml(p.building_name)}` : ""}</strong>
-        <p>${escapeHtml(p.fine_function || p.coarse_function || "semantic class loading")} | ${escapeHtml(p.thermal_template || "template loading")} | confidence ${formatNumber(p.llm_confidence, 2)}</p>
+        <strong>Building ${escapeHtml(p.bldg_id || "unknown")}</strong>
+        <p>${escapeHtml(label)} | ${escapeHtml(p.thermal_template || "template loading")} | confidence ${formatNumber(p.llm_confidence, 2)}</p>
         <p>${energy ? `Non-microclimate ${energyFormatValue(energy[`${season}_tmy_kwh`], "tmy_kwh")} | microclimate ${energyFormatValue(energy[`${season}_wrf_kwh`], "wrf_kwh")} | difference ${energyFormatValue(energy[`${season}_diff_pct`], "diff_pct")}` : "Single-building energy shard is loading or not selected yet."}</p>
         <div class="tag-row">
           <span class="tag">Grid ${escapeHtml(p.grid_id || "n/a")}</span>
@@ -2879,7 +3004,7 @@ function buildAgentTrace(prompt) {
 function buildDataAgentStep(prompt, selected, building) {
   const metrics = state.data ? state.data.coreMetrics : {};
   const text = building
-    ? `Selected building ${building.bldg_id} is ${building.coarse_function || "unknown function"}, ${building.age_bin || "unknown vintage"}, grid ${building.grid_id || "n/a"}.`
+    ? `Selected building ${building.bldg_id} is ${buildingFunctionDisplay(building)}, ${building.age_bin || "unknown vintage"}, grid ${building.grid_id || "n/a"}.`
     : selected
       ? selected.energy_building_count
         ? `Energy grid ${selected.grid_id} contains ${formatNumber(selected.energy_building_count, 0)} buildings; active WRF-vs-TMY shift is ${energyFormatValue(selected[energyMetricField()], state.activeEnergyMetric)}.`
@@ -3092,7 +3217,7 @@ function buildEvidenceRows(prompt, selected, building, scenario) {
     {
       label: "Building semantics",
       value: building
-        ? `${building.coarse_function || "function n/a"} | ${building.thermal_template || "template n/a"}`
+        ? `${buildingFunctionDisplay(building)} | ${building.thermal_template || "template n/a"}`
         : selected && selected.energy_building_count
           ? `${energyMetricLabel()} evidence layer`
         : selected && !selected.strategy_id
@@ -3621,11 +3746,12 @@ function selectBuildingFeature(feature, lngLat) {
 
   if (state.popup) state.popup.remove();
   if (state.map && lngLat) {
+    const label = buildingFunctionDisplay(p);
     state.popup = new mapboxgl.Popup({ closeButton: false, maxWidth: "300px" })
       .setLngLat(lngLat)
       .setHTML(`
         <div class="popup-title">Building ${p.bldg_id || "unknown"}</div>
-        <div class="popup-line">${p.coarse_function || "Function unknown"} | ${p.age_bin || "age unknown"}</div>
+        <div class="popup-line">${escapeHtml(label)} | ${p.age_bin || "age unknown"}</div>
         <div class="popup-line">Grid ${p.grid_id || "n/a"} | ${p.thermal_template || "template n/a"}</div>
       `)
       .addTo(state.map);
@@ -3754,17 +3880,20 @@ function emptyBuildingSelectionFilter() {
 }
 
 function normalizeBuildingProperties(raw) {
+  const targetFid = raw.TARGET_FID ?? raw.target_fid;
+  const targetBasedId = targetFid !== undefined && targetFid !== null ? Number(targetFid) + 1 : null;
   return {
     ...raw,
-    bldg_id: raw.bldg_id ?? raw.objectid,
-    coarse_function: raw.coarse_function ?? raw.building_type,
-    fine_function: raw.fine_function,
-    age_bin: raw.age_bin ?? raw.final_year,
-    llm_confidence: raw.llm_confidence ?? raw.ml_probability,
-    height_m: raw.height_m,
-    footprint_m2: raw.footprint_m2,
-    thermal_template: raw.thermal_template,
-    grid_id: raw.grid_id,
+    bldg_id: raw.bldg_id ?? raw.objectid ?? raw.OID_ ?? raw.oid_ ?? (Number.isFinite(targetBasedId) ? targetBasedId : null),
+    coarse_function: raw.coarse_function ?? raw.building_type ?? raw.Coarse_Function ?? raw.type,
+    fine_function: raw.fine_function ?? raw.Fine_Function,
+    age_bin: raw.age_bin ?? raw.Final_Age_Bin ?? raw.final_year ?? raw.age,
+    llm_confidence: raw.llm_confidence ?? raw.Confidence ?? raw.ml_probability,
+    height_m: raw.height_m ?? raw.height,
+    footprint_m2: raw.footprint_m2 ?? raw.Shape_Area,
+    thermal_template: raw.thermal_template ?? raw.Thermal_Template,
+    building_name: raw.building_name ?? raw.Building_Name,
+    grid_id: raw.grid_id ?? raw.grid_label ?? raw.grid_shade,
     center_lon: raw.center_lon,
     center_lat: raw.center_lat
   };
@@ -3975,6 +4104,8 @@ function renderSelectedBuilding() {
   const energy = cachedBuildingEnergyRecord(p.bldg_id);
   const semantic = cachedBuildingSemanticRecord(p.bldg_id);
   const season = state.activeEnergySeason;
+  const functionLabel = buildingFunctionDisplay(p);
+  const coarseLabel = buildingCoarseDisplay(p);
   const energyTiles = energy
     ? `
       <div class="summary-tile"><strong>${energyFormatValue(energy[`${season}_diff_pct`], "diff_pct")}</strong><span>${state.energy?.seasons?.[season]?.short || season} WRF-vs-TMY</span></div>
@@ -3988,7 +4119,7 @@ function renderSelectedBuilding() {
   document.getElementById("selectedTitle").textContent = `Building ${p.bldg_id || "unknown"}`;
   document.getElementById("selectedSummary").innerHTML = `
     <div class="summary-grid">
-      <div class="summary-tile"><strong>${p.fine_function || p.coarse_function || (semanticLoading ? "Loading" : "n/a")}</strong><span>refined function</span></div>
+      <div class="summary-tile"><strong>${functionLabel || (semanticLoading ? "Loading" : "n/a")}</strong><span>refined function</span></div>
       <div class="summary-tile"><strong>${p.age_bin || "n/a"}</strong><span>age bin</span></div>
       <div class="summary-tile"><strong>${p.thermal_template || (semanticLoading ? "Loading" : "n/a")}</strong><span>thermal template</span></div>
       <div class="summary-tile"><strong>${formatNumber(p.llm_confidence, 2)}</strong><span>LLM confidence</span></div>
@@ -4005,7 +4136,7 @@ function renderSelectedBuilding() {
   document.getElementById("agentSteps").innerHTML = `
     <div class="agent-step">
       <h3>Data Agent: building semantics</h3>
-      <p>${p.fine_function || p.coarse_function || "Unknown refined function"}; source function ${p.coarse_function || "n/a"}; vintage ${p.age_bin || "n/a"}.${energy ? ` ${state.energy?.seasons?.[season]?.short || season} energy shift is ${energyFormatValue(energy[`${season}_diff_pct`], "diff_pct")}.` : ""}</p>
+      <p>${functionLabel || "Unknown refined function"}; source function ${coarseLabel}; vintage ${p.age_bin || "n/a"}.${energy ? ` ${state.energy?.seasons?.[season]?.short || season} energy shift is ${energyFormatValue(energy[`${season}_diff_pct`], "diff_pct")}.` : ""}</p>
     </div>
     <div class="agent-step">
       <h3>Decision-unit linkage</h3>
@@ -4020,7 +4151,7 @@ function renderSelectedBuilding() {
   document.getElementById("unitExamples").innerHTML = `
     <div class="section-title">Semantic reasoning</div>
     <div class="unit-card">
-      <p>${p.building_name ? `${escapeHtml(p.building_name)} / ` : ""}${p.fine_function || p.coarse_function || "This building"} is bound to a semantic decision unit through grid, refined function, vintage and thermal template. ${energy ? `The Energy shard adds exact representative-week non-microclimate ${energyFormatValue(energy[`${season}_tmy_kwh`], "tmy_kwh")} and microclimate ${energyFormatValue(energy[`${season}_wrf_kwh`], "wrf_kwh")}.` : "The Energy shard will add exact representative-week values after it loads."}</p>
+      <p>${functionLabel || "This building"} is bound to a semantic decision unit through grid, refined function, vintage and thermal template. ${energy ? `The Energy shard adds exact representative-week non-microclimate ${energyFormatValue(energy[`${season}_tmy_kwh`], "tmy_kwh")} and microclimate ${energyFormatValue(energy[`${season}_wrf_kwh`], "wrf_kwh")}.` : "The Energy shard will add exact representative-week values after it loads."}</p>
       <div class="tag-row">
         <span class="tag">Grid ${p.grid_id || "n/a"}</span>
         <span class="tag">${p.thermal_template || "template n/a"}</span>
@@ -4160,7 +4291,7 @@ function focus3DBuildings() {
     defaultMapCenter();
   state.map.easeTo({
     center: target.every(Number.isFinite) ? target : defaultMapCenter(),
-    zoom: Math.max(state.map.getZoom(), 14.2),
+    zoom: Math.max(state.map.getZoom(), buildingMinZoom() + 0.45),
     pitch: 62,
     bearing: -22,
     duration: 800
@@ -4201,22 +4332,22 @@ function updateBuildingStatus() {
     node.title = `Configured source: ${cfg.sourceUrl || "n/a"} | source-layer: ${cfg.sourceLayer || "n/a"} | stage: ${stage}`;
     return;
   }
-  if (state.map.getLayoutProperty("building-fill", "visibility") === "none") {
-    node.textContent = "3D buildings ready";
-    node.title = "The tileset layer is loaded and will show in 3D Buildings or Energy building mode.";
-    return;
-  }
-  const minzoom = cfg.minzoom || 11;
+  const minzoom = buildingMinZoom();
   if (state.map.getZoom() < minzoom) {
     node.textContent = `Zoom to z${formatNumber(minzoom, 1)} for 3D buildings`;
     node.title = "The layer is loaded; building extrusions are hidden below the configured minimum zoom.";
     return;
   }
-  const features = state.map.queryRenderedFeatures({ layers: ["building-fill"] });
-  node.title = "";
-  node.textContent = features.length
-    ? `3D buildings: ${formatNumber(features.length)} visible`
-    : "3D buildings ready; move over Shanghai";
+  if (state.map.getLayoutProperty("building-fill", "visibility") === "none") {
+    node.textContent = "3D buildings ready";
+    node.title = "The tileset layer is loaded and will show in 3D Buildings or Energy building mode.";
+    return;
+  }
+  node.title = `Energy building coloring starts at z${formatNumber(buildingEnergyMinZoom(), 1)} to keep laptop interaction responsive.`;
+  node.textContent =
+    isEnergyBuildingColorMode() && state.map.getZoom() < buildingEnergyMinZoom()
+      ? `3D buildings visible; energy color at z${formatNumber(buildingEnergyMinZoom(), 1)}`
+      : "3D buildings visible";
 }
 
 function fitAllocation() {
@@ -4591,7 +4722,7 @@ async function callRemoteModel(message, apiKey, endpoint, model) {
         {
           role: "system",
           content:
-            "You are a Shanghai urban building decarbonization agent operating inside a five-agent workbench: Data, Knowledge, Scenario, Optimization, and Critic. Answer using the supplied research data, trace, evidence lineage, and guardrails only. Be concise, quantitative, and explicit about uncertainty."
+            "You are a Shanghai urban building decarbonization agent operating inside a five-agent workbench: Data, Knowledge, Scenario, Optimization, and Critic. Answer in English only using the supplied research data, trace, evidence lineage, and guardrails. Be concise, quantitative, and explicit about uncertainty."
         },
         { role: "user", content: `${context}\n\nUser question: ${message}` }
       ],
@@ -4622,7 +4753,7 @@ function buildContextPrompt() {
     {
       coreMetrics: metrics,
       activeScenario: scenario,
-      selectedBuilding: building,
+      selectedBuilding: buildingContextForPrompt(building),
       selectedGrid: selected,
       selectedOpportunityGrid: opportunity,
       selectedMicroclimateGrid: microclimate,
@@ -4650,7 +4781,9 @@ function buildContextPrompt() {
             metric: state.activeEnergyMetric,
             metricLabel: energyMetricLabel(),
             topGridRows: energyGridRowsForMetric().slice(0, 5).map((feature) => feature.properties),
-            topTypeRows: energyTypeRowsForSeason().slice(0, 5)
+            topTypeRows: energyTypeRowsForSeason()
+              .slice(0, 5)
+              .map((row) => ({ ...row, type_label: englishEnergyTypeLabel(row.type_label) || "Building type" }))
           }
         : null,
       selectedUnits: selected ? state.data.unitExamplesByGrid[String(selected.grid_id)] || [] : [],
@@ -4684,6 +4817,10 @@ function localAgentAnswer(message) {
   const asksBenchmark = hasAny(text, raw, ["model", "benchmark", "\u6a21\u578b", "\u6d4b\u8bc4"]);
 
   if (clean.length <= 2 || ["hi", "hello", "hey", "\u4f60\u597d"].includes(clean.toLowerCase())) {
+    return "I am here. Ask me naturally about the platform, paper, WRF microclimate evidence, building energy response, retrofit optimization, or the currently selected map object.";
+  }
+
+  if (false) {
     return "我在。你可以像和 GPT 聊天一样直接问我平台、论文、WRF 微气候、建筑能耗或某个点击对象的问题；如果你点中了建筑或网格，我会自动把它作为上下文。";
   }
 
@@ -4698,7 +4835,7 @@ function localAgentAnswer(message) {
     const record = cachedBuildingEnergyRecord(b.bldg_id);
     const season = state.activeEnergySeason;
     if (record) {
-      return `Building ${b.bldg_id}: ${state.energy?.seasons?.[season]?.short || season} TMY energy is ${energyFormatValue(record[`${season}_tmy_kwh`], "tmy_kwh")}, WRF/microclimate energy is ${energyFormatValue(record[`${season}_wrf_kwh`], "wrf_kwh")}, and the shift is ${energyFormatValue(record[`${season}_diff_pct`], "diff_pct")}. Type is ${record.type_label || b.coarse_function || "n/a"}, grid ${record.grid_id || b.grid_id || "n/a"}.`;
+      return `Building ${b.bldg_id}: ${state.energy?.seasons?.[season]?.short || season} TMY energy is ${energyFormatValue(record[`${season}_tmy_kwh`], "tmy_kwh")}, WRF/microclimate energy is ${energyFormatValue(record[`${season}_wrf_kwh`], "wrf_kwh")}, and the shift is ${energyFormatValue(record[`${season}_diff_pct`], "diff_pct")}. Type is ${record.type_label || buildingFunctionDisplay(b) || "n/a"}, grid ${record.grid_id || b.grid_id || "n/a"}.`;
     }
     return `Building ${b.bldg_id} is selected, but its energy shard is still loading. Open the Energy panel or wait a moment, then ask again.`;
   }
@@ -4712,7 +4849,7 @@ function localAgentAnswer(message) {
       })
       .join("; ");
     const type = energyTypeRowsForSeason()[0];
-    return `The active Energy view is ${energyMetricLabel()} at ${ENERGY_MODES[state.activeEnergyMode]} resolution. Largest grid responses by the active metric: ${top}. The highest building-type shift is ${type ? `${type.type_label} at ${energyFormatValue(type[`${state.activeEnergySeason}_diff_pct`], "diff_pct")}` : "not available"}.`;
+    return `The active Energy view is ${energyMetricLabel()} at ${ENERGY_MODES[state.activeEnergyMode]} resolution. Largest grid responses by the active metric: ${top}. The highest building-type shift is ${type ? `${englishEnergyTypeLabel(type.type_label) || "Building type"} at ${energyFormatValue(type[`${state.activeEnergySeason}_diff_pct`], "diff_pct")}` : "not available"}.`;
   }
 
   if (asksMicroclimate && state.selectedMicroclimate) {
@@ -4757,7 +4894,7 @@ function localAgentAnswer(message) {
   if (state.selectedBuilding) {
     const b = mergedBuildingProperties(state.selectedBuilding.properties);
     if (asksBuilding) {
-      return `Building ${b.bldg_id || "unknown"} is classified as ${b.coarse_function || "unknown"} / ${b.fine_function || "unknown"}, age bin ${b.age_bin || "unknown"}, template ${b.thermal_template || "unknown"}, with LLM confidence ${formatNumber(b.llm_confidence, 2)}. ${buildingCriticText(b, state.selectedFeature && state.selectedFeature.properties)}`;
+      return `Building ${b.bldg_id || "unknown"} is classified as ${buildingCoarseDisplay(b)} / ${buildingFunctionDisplay(b)}, age bin ${b.age_bin || "unknown"}, template ${b.thermal_template || "unknown"}, with LLM confidence ${formatNumber(b.llm_confidence, 2)}. ${buildingCriticText(b, state.selectedFeature && state.selectedFeature.properties)}`;
     }
   }
 

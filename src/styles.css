@@ -190,9 +190,9 @@ select:focus {
   width: 360px;
   max-width: calc(100vw - 32px);
   max-height: min(62vh, 650px);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -204,7 +204,6 @@ select:focus {
   position: sticky;
   top: 0;
   z-index: 2;
-  flex: 0 0 auto;
   padding: 13px 16px;
   background: var(--panel);
 }
@@ -219,21 +218,10 @@ select:focus {
   padding: 13px 16px;
 }
 
-.inspector .selected-summary,
-.inspector .agent-steps,
-.inspector .unit-examples {
-  flex: 0 0 auto;
-}
-
-.inspector .unit-examples {
-  overflow: auto;
-}
-
 .inspector-legend {
   position: sticky;
   bottom: 0;
   z-index: 2;
-  flex: 0 0 auto;
   padding: 12px 16px 14px;
   border-top: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.95);
@@ -622,6 +610,18 @@ h2 {
 
 .narrative strong {
   color: var(--ink);
+}
+
+.optimization-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0 24px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.optimization-summary .metric-card {
+  min-height: 80px;
 }
 
 .toggle-list {

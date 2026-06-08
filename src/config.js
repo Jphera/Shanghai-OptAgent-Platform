@@ -27,8 +27,10 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
     enabled: true,
     sourceUrl: "mapbox://jpyjpy.rinkgkw6s4rz",
     sourceLayer: "61360c70f5ca9330b9e7",
-    minzoom: 10.8,
-    note: "Mapbox Studio tileset 11_shanghai_buildings_3d_height. Published maxzoom is 16; source-layer id was read from TileJSON vector_layers."
+    minzoom: 14.05,
+    energyPaintMinzoom: 15.6,
+    maxEnergyFeatureStates: 2200,
+    note: "Mapbox Studio tileset 11_shanghai_buildings_3d_height. The app uses zoom-level-of-detail thresholds so the full 592k-building 3D extrusion layer remains usable on laptops."
   },
   microclimateTileset: {
     enabled: true,

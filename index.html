@@ -27,9 +27,9 @@
           <span>O</span>
           <small>Overview</small>
         </button>
-        <button class="rail-button" data-panel-target="layers" title="Map layers">
-          <span>L</span>
-          <small>Layers</small>
+        <button class="rail-button" data-panel-target="layers" title="Agent optimization">
+          <span>Ao</span>
+          <small>Agent Opt</small>
         </button>
         <button class="rail-button" data-panel-target="microclimate" title="Microclimate">
           <span>M</span>
@@ -71,6 +71,17 @@
         </div>
 
         <div class="panel-section" id="panel-layers">
+          <div class="microclimate-head">
+            <p class="eyebrow">Agent optimization</p>
+            <h2>Budget-constrained allocation</h2>
+          </div>
+          <div id="optimizationBudgetSummary" class="optimization-summary"></div>
+          <div class="control-block">
+            <p class="summary-text">
+              Full opportunity grids show citywide candidate potential. Selected allocation grids show the
+              budget-constrained NSGA-II portfolio for the active model comparison.
+            </p>
+          </div>
           <div class="control-block">
             <label for="strategyFilter">Strategy filter</label>
             <select id="strategyFilter"></select>
@@ -91,8 +102,8 @@
           <div class="toggle-list">
             <label><input id="toggleBoundary" type="checkbox" checked /> Shanghai boundary</label>
             <label><input id="toggleOpportunity" type="checkbox" checked /> Full opportunity grids</label>
-            <label><input id="toggleAllocation" type="checkbox" checked /> Selected allocation grids</label>
-            <label><input id="toggleBuildings" type="checkbox" checked /> 3D building tileset</label>
+            <label><input id="toggleAllocation" type="checkbox" checked /> Budget-selected allocation</label>
+            <label><input id="toggleBuildings" type="checkbox" checked /> 3D buildings LOD</label>
             <label><input id="toggleLabels" type="checkbox" /> Grid labels</label>
           </div>
           <button id="fitView" type="button" class="wide-button">Fit Shanghai allocation</button>
