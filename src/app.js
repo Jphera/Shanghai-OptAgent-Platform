@@ -865,22 +865,23 @@ function buildingFunctionColorExpression() {
 }
 
 function buildingHeightColorExpression() {
+  // Height ramp: soft cyan (low) -> blue -> indigo -> violet -> magenta (tall).
   return [
     "interpolate",
     ["linear"],
     ["coalesce", ["to-number", ["get", "height_m"]], 8],
     0,
-    "#d8dfdc",
-    12,
-    "#bdcbc5",
-    35,
-    "#8ca89e",
-    80,
-    "#67877f",
+    "#5ad1e6",
+    20,
+    "#36a7e0",
+    45,
+    "#3f72d6",
+    90,
+    "#5a52c9",
     160,
-    "#4f6870",
+    "#8a3fc0",
     260,
-    "#384d58"
+    "#b5179e"
   ];
 }
 
@@ -2081,21 +2082,187 @@ function energyFormatValue(value, metric = state.activeEnergyMetric) {
 function renderEvidence() {
   renderModelBenchmark();
   renderArchetypeExplorer();
+  safeRender(renderSemanticSankey);
   safeRender(renderParetoExplorer);
   renderPolicyExplorer();
   renderBudgetChart();
+  safeRender(renderFullYearCurves);
   safeRender(renderFullYearValidation);
   safeRender(renderIndependenceExplorer);
 }
 
-// Isolate the newly added §3.3/§3.5/§3.6 evidence blocks so a data/render issue in any
-// of them can never abort renderEvidence() (and therefore init()/the map).
+// Isolate the newly added evidence blocks so a data/render issue in any of them can never
+// abort renderEvidence() (and therefore init()/the map).
 function safeRender(fn) {
   try {
     fn();
   } catch (error) {
     console.warn("Evidence block render failed:", error);
   }
+}
+
+// Fig.18 — city monthly electricity: TMY baseline vs microclimate-anchored vs net after rooftop PV.
+function renderFullYearCurves() {
+  const container = document.getElementById("fullYearCurves");
+  if (!container) return;
+  const rows = (state.data.fullYearMonthlyCurves || []).filter((r) => Number.isFinite(Number(r.tmy_twh)));
+  if (rows.length < 2) {
+    container.innerHTML = `<p class="narrative">Full-year monthly curves are not loaded.</p>`;
+    return;
+  }
+  const W = 320;
+  const H = 150;
+  const padL = 26;
+  const padR = 8;
+  const padT = 10;
+  const padB = 20;
+  const series = [
+    { key: "tmy_twh", label: "TMY load", color: "#286ca3" },
+    { key: "micro_twh", label: "Microclimate", color: "#167a75" },
+    { key: "net_twh", label: "Net after PV", color: "#d8902f" }
+  ];
+  const values = rows.flatMap((r) => series.map((s) => Number(r[s.key]) || 0));
+  const maxY = Math.max(...values);
+  const minY = Math.min(...values, 0);
+  const n = rows.length;
+  const xOf = (i) => padL + (i / (n - 1)) * (W - padL - padR);
+  const yOf = (v) => padT + (1 - (v - minY) / ((maxY - minY) || 1)) * (H - padT - padB);
+  const grid = [minY, (minY + maxY) / 2, maxY]
+    .map(
+      (v) =>
+        `<line class="grid-line" x1="${padL}" y1="${yOf(v).toFixed(1)}" x2="${W - padR}" y2="${yOf(v).toFixed(1)}" />` +
+        `<text class="axis-text" x="0" y="${(yOf(v) + 3).toFixed(1)}">${formatNumber(v, 0)}</text>`
+    )
+    .join("");
+  const lines = series
+    .map((s) => {
+      const pts = rows.map((r, i) => `${xOf(i).toFixed(1)},${yOf(Number(r[s.key]) || 0).toFixed(1)}`).join(" ");
+      return `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" />`;
+    })
+    .join("");
+  const xLabels = rows
+    .map((r, i) =>
+      i % 2 === 0
+        ? `<text class="axis-text" x="${xOf(i).toFixed(1)}" y="${H - 5}" text-anchor="middle">${r.month_label || r.month}</text>`
+        : ""
+    )
+    .join("");
+  const legend = series.map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`).join("");
+  container.innerHTML = `
+    <p class="narrative">Monthly city electricity (TWh): TMY baseline vs microclimate-anchored vs net after rooftop PV.</p>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Full-year monthly energy curves">
+      ${grid}${lines}${xLabels}
+    </svg>
+    <div class="chart-legend">${legend}</div>
+  `;
+}
+
+// Fig.14 — semantic re-mapping Sankey: old UBEM sector -> refined sector -> selected strategy.
+function renderSemanticSankey() {
+  const container = document.getElementById("semanticSankey");
+  if (!container) return;
+  const sankey = state.data.semanticSankey || {};
+  const stageA = sankey.stageA || [];
+  const stageB = sankey.stageB || [];
+  const stageC = sankey.stageC || [];
+  if (!stageA.length || !stageB.length || !stageC.length) {
+    container.innerHTML = `<p class="narrative">Semantic re-mapping flow data are not loaded.</p>`;
+    return;
+  }
+  const sectorColor = (name) =>
+    ({
+      Residential: "#4d8b57",
+      "Office/employment": "#286ca3",
+      Commercial: "#d8902f",
+      "Public service": "#7b63b7",
+      School: "#bd4a42"
+    })[name] || "#8d989d";
+  const strategyColor = (name) =>
+    ({
+      "Cool roof": "#d8902f",
+      Controls: "#167a75",
+      "Rooftop PV": "#286ca3",
+      "External shading": "#7b63b7",
+      "Envelope insulation": "#4d8b57",
+      "HVAC COP upgrade": "#bd4a42"
+    })[name] || "#7b63b7";
+  const W = 340;
+  const H = 214;
+  const nodeW = 9;
+  const padT = 8;
+  const padB = 8;
+  const gap = 8;
+  const ax = 80;
+  const bx = 165;
+  const cx = W - nodeW - 80;
+  const grand = stageA.reduce((sum, node) => sum + (Number(node.total) || 0), 0) || 1;
+  const maxNodes = Math.max(stageA.length, stageB.length, stageC.length);
+  const scale = (H - padT - padB - gap * (maxNodes - 1)) / grand;
+  const layout = (nodes, x) => {
+    let y = padT;
+    const map = {};
+    nodes.forEach((node) => {
+      const h = Math.max(2, (Number(node.total) || 0) * scale);
+      map[node.name] = { x, y, h, outOff: y, inOff: y };
+      y += h + gap;
+    });
+    return map;
+  };
+  const A = layout(stageA, ax);
+  const B = layout(stageB, bx);
+  const C = layout(stageC, cx);
+  const ribbon = (x0, y0, x1, y1, t, color) => {
+    const mx = (x0 + x1) / 2;
+    return `<path class="sankey-link" d="M${x0},${y0.toFixed(1)} C${mx},${y0.toFixed(1)} ${mx},${y1.toFixed(1)} ${x1},${y1.toFixed(
+      1
+    )} L${x1},${(y1 + t).toFixed(1)} C${mx},${(y1 + t).toFixed(1)} ${mx},${(y0 + t).toFixed(1)} ${x0},${(y0 + t).toFixed(
+      1
+    )} Z" fill="${color}" fill-opacity="0.36" />`;
+  };
+  const flow = (links, src, dst, colorFn) =>
+    (links || [])
+      .map((link) => {
+        const s = src[link.source];
+        const t = dst[link.target];
+        if (!s || !t) return "";
+        const thick = Math.max(1, (Number(link.value) || 0) * scale);
+        const path = ribbon(s.x + nodeW, s.outOff, t.x, t.inOff, thick, colorFn(link));
+        s.outOff += thick;
+        t.inOff += thick;
+        return path;
+      })
+      .join("");
+  const ribbonsAB = flow(sankey.linksAB, A, B, (link) => sectorColor(link.source));
+  const ribbonsBC = flow(sankey.linksBC, B, C, (link) => strategyColor(link.target));
+  const rects = (map, colorFn) =>
+    Object.entries(map)
+      .map(
+        ([name, node]) =>
+          `<rect x="${node.x}" y="${node.y.toFixed(1)}" width="${nodeW}" height="${node.h.toFixed(
+            1
+          )}" rx="2" fill="${colorFn(name)}" />`
+      )
+      .join("");
+  const labelsA = Object.entries(A)
+    .map(
+      ([name, node]) =>
+        `<text class="sankey-label" x="${ax - 5}" y="${(node.y + node.h / 2 + 3).toFixed(1)}" text-anchor="end">${
+          name.split("/")[0]
+        }</text>`
+    )
+    .join("");
+  const labelsC = Object.entries(C)
+    .map(
+      ([name, node]) =>
+        `<text class="sankey-label" x="${cx + nodeW + 5}" y="${(node.y + node.h / 2 + 3).toFixed(1)}" text-anchor="start">${name}</text>`
+    )
+    .join("");
+  container.innerHTML = `
+    <p class="narrative">Old UBEM sector &rarr; POI-LLM refined sector &rarr; selected strategy. Ribbon width = annual carbon abatement.</p>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Semantic re-mapping Sankey">
+      ${ribbonsAB}${ribbonsBC}${rects(A, sectorColor)}${rects(B, sectorColor)}${rects(C, strategyColor)}${labelsA}${labelsC}
+    </svg>
+  `;
 }
 
 // §3.3 / Fig.4 — NSGA-II Pareto front. The 1.0B RMB run yields 140 budget-bound
@@ -3624,6 +3791,7 @@ function extendBounds(a, b) {
 
 function wireChat() {
   document.getElementById("closeAgentModal")?.addEventListener("click", closeAgentModal);
+  makeAgentModalDraggable();
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeAgentModal();
   });
@@ -3698,6 +3866,48 @@ function openAgentModal() {
 function closeAgentModal() {
   const modal = document.getElementById("agentModal");
   if (modal) modal.classList.add("hidden");
+}
+
+// Make the OptAgent chat panel draggable by its header.
+function makeAgentModalDraggable() {
+  const modal = document.getElementById("agentModal");
+  const handle = document.getElementById("agentModalDrag");
+  const panel = modal ? modal.querySelector(".agent-modal-panel") : null;
+  if (!modal || !handle || !panel) return;
+  let dragging = false;
+  let startX = 0;
+  let startY = 0;
+  let baseLeft = 0;
+  let baseTop = 0;
+  handle.addEventListener("mousedown", (event) => {
+    if (event.target.closest("button")) return;
+    const rect = panel.getBoundingClientRect();
+    modal.style.right = "auto";
+    modal.style.bottom = "auto";
+    modal.style.left = `${rect.left}px`;
+    modal.style.top = `${rect.top}px`;
+    baseLeft = rect.left;
+    baseTop = rect.top;
+    startX = event.clientX;
+    startY = event.clientY;
+    dragging = true;
+    document.body.style.userSelect = "none";
+    event.preventDefault();
+  });
+  window.addEventListener("mousemove", (event) => {
+    if (!dragging) return;
+    const maxX = window.innerWidth - panel.offsetWidth - 8;
+    const maxY = window.innerHeight - 44;
+    const nextX = Math.max(8, Math.min(baseLeft + (event.clientX - startX), maxX));
+    const nextY = Math.max(8, Math.min(baseTop + (event.clientY - startY), maxY));
+    modal.style.left = `${nextX}px`;
+    modal.style.top = `${nextY}px`;
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragging) return;
+    dragging = false;
+    document.body.style.userSelect = "";
+  });
 }
 
 function restoreApiSettings() {

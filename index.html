@@ -55,15 +55,13 @@
         </header>
 
         <div class="panel-section active" id="panel-overview">
-          <p class="eyebrow">Prescription layer · §3.1&ndash;§3.4</p>
           <div class="metric-grid" id="metricGrid"></div>
           <div class="control-block">
-            <label for="scenarioSelect">Model comparison (S0&ndash;S6 ablation)</label>
+            <label for="scenarioSelect">Model comparison</label>
             <select id="scenarioSelect"></select>
             <p class="summary-text">
-              These entries are the paper's ablation configurations (old vs refined semantics, TMY vs microclimate,
-              energy-only, deep-retrofit), not independent policy scenarios. The proposed run is
-              <strong>S3 refined-microclimate agentic</strong>.
+              Ablation and model variants (old vs refined semantics, TMY vs microclimate, energy-only, deep-retrofit),
+              not independent policy scenarios. Proposed run: <strong>S3 refined-microclimate agentic</strong>.
             </p>
           </div>
           <div class="control-block">
@@ -102,7 +100,7 @@
 
         <div class="panel-section" id="panel-microclimate">
           <div class="microclimate-head">
-            <p class="eyebrow">Paper&nbsp;4 diagnostic substrate · feeds §3.2</p>
+            <p class="eyebrow">Previous paper evidence</p>
             <h2>Representative-week microclimate</h2>
           </div>
           <div class="control-block">
@@ -145,7 +143,7 @@
 
         <div class="panel-section" id="panel-energy">
           <div class="microclimate-head">
-            <p class="eyebrow">Paper&nbsp;4 diagnostic substrate · feeds §3.2 / §3.5</p>
+            <p class="eyebrow">Previous paper evidence</p>
             <h2>Building energy response</h2>
           </div>
           <div class="control-block">
@@ -186,45 +184,48 @@
 
         <div class="panel-section" id="panel-evidence">
           <div class="control-block">
-            <p class="eyebrow">Results evidence, mapped to the paper</p>
             <p class="summary-text">
-              Each block below corresponds to a Results subsection (§3.1&ndash;§3.6) and a paper figure. OptAgent
-              <strong>orchestrates and explains</strong> these results; the energy and carbon numbers themselves come
-              from UBEM-derived scoring, NSGA-II/MILP optimization and full-year EnergyPlus validation, not from the LLM.
+              Quantitative evidence behind the Shanghai retrofit allocation. OptAgent only orchestrates and explains
+              these results &mdash; the energy and carbon numbers come from the UBEM + NSGA-II/MILP + EnergyPlus pipeline.
             </p>
           </div>
           <div class="control-block">
-            <div class="section-title">Building-type retrofit ranking <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.1 · Fig.15</span></div>
+            <div class="section-title">Building-type retrofit ranking</div>
             <div id="archetypeExplorer" class="archetype-explorer"></div>
             <figure class="evidence-figure">
               <img src="./assets/figures/fig15_archetype_strategy_rank_heatmap.png" alt="Archetype-level strategy priority heatmap" />
             </figure>
           </div>
           <div class="control-block">
-            <div class="section-title">NSGA-II Pareto front <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.3 · Fig.4</span></div>
+            <div class="section-title">Semantic re-mapping flow</div>
+            <div id="semanticSankey" class="sankey-chart"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">NSGA-II Pareto front</div>
             <div id="paretoExplorer" class="pareto-explorer"></div>
           </div>
           <div class="control-block">
-            <div class="section-title">Interactive 10-model benchmark <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.3 · Fig.13</span></div>
+            <div class="section-title">Interactive 10-model benchmark</div>
             <div id="benchmarkExplorer" class="benchmark-explorer"></div>
           </div>
           <div class="control-block">
-            <div class="section-title">Policy cost and equity evidence <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.4 · Fig.12</span></div>
+            <div class="section-title">Policy cost and equity evidence</div>
             <div id="policyExplorer" class="policy-explorer"></div>
             <figure class="evidence-figure">
               <img src="./assets/figures/fig12_policy_translation_macc_equity.png" alt="Policy translation, MACC and spatial equity evidence" />
             </figure>
           </div>
           <div class="control-block">
-            <div class="section-title">Budget sensitivity <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.4 · Fig.6</span></div>
+            <div class="section-title">Budget sensitivity</div>
             <div id="budgetChart" class="bar-chart"></div>
           </div>
           <div class="control-block">
-            <div class="section-title">Full-year EUI validation <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.5 · Fig.18</span></div>
+            <div class="section-title">Full-year energy &amp; carbon</div>
+            <div id="fullYearCurves" class="evidence-chart"></div>
             <div id="fullYearValidation" class="validation-explorer"></div>
           </div>
           <div class="control-block">
-            <div class="section-title">Independence &amp; strategy drivers <span class="section-tag" style="font-size:11px;font-weight:600;color:#167a75;background:#e7f0ee;border-radius:999px;padding:2px 8px;margin-left:6px;white-space:nowrap;">§3.6 · Fig.16</span></div>
+            <div class="section-title">Independence &amp; strategy drivers</div>
             <div id="independenceExplorer" class="independence-explorer"></div>
           </div>
         </div>
@@ -247,6 +248,15 @@
           <button id="askAgentButton" type="button" class="primary-tool">Ask OptAgent</button>
           <span id="buildingStatus" class="building-status">3D buildings loading</span>
         </div>
+        <div class="height-legend" id="heightLegend" aria-label="Building height legend">
+          <h4>Building height</h4>
+          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#b5179e"></span>&ge; 260 m</div>
+          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#8a3fc0"></span>~ 160 m</div>
+          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#5a52c9"></span>~ 90 m</div>
+          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#3f72d6"></span>~ 45 m</div>
+          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#36a7e0"></span>~ 20 m</div>
+          <div class="height-legend-row"><span class="height-legend-swatch" style="background:#5ad1e6"></span>&le; 8 m</div>
+        </div>
       </section>
 
       <aside class="inspector" aria-label="Selected grid analysis">
@@ -261,10 +271,23 @@
 
       <div id="agentModal" class="agent-modal hidden" role="dialog" aria-modal="false" aria-labelledby="agentModalTitle">
         <section class="agent-modal-panel">
-          <header class="agent-modal-header">
-            <div>
-              <p class="eyebrow">DeepSeek reasoning agent</p>
-              <h2 id="agentModalTitle">Ask OptAgent</h2>
+          <header class="agent-modal-header" id="agentModalDrag" title="Drag to move">
+            <div class="agent-modal-headline">
+              <span class="agent-avatar" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img">
+                  <rect x="4" y="8" width="16" height="12" rx="3" />
+                  <path d="M12 4v4" />
+                  <circle cx="12" cy="3" r="1.3" />
+                  <circle cx="9.5" cy="13" r="1.2" />
+                  <circle cx="14.5" cy="13" r="1.2" />
+                  <path d="M9.5 16.5h5" />
+                  <path d="M2 12v3M22 12v3" />
+                </svg>
+              </span>
+              <div>
+                <p class="eyebrow">DeepSeek reasoning agent</p>
+                <h2 id="agentModalTitle">Ask OptAgent</h2>
+              </div>
             </div>
             <button id="closeAgentModal" type="button" title="Close">Close</button>
           </header>
