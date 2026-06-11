@@ -8,6 +8,10 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
   microclimateDataUrl: "./data/microclimate-platform-data.json",
   energyDataUrl: "./data/energy-platform-data.json",
   buildingSemanticUrl: "./data/building-semantic-index.json",
+  adminMajorRegionsUrl: "./data/shanghai-admin-major-regions.geojson",
+  adminLocalRegionsUrl: "./data/shanghai-admin-local-regions.geojson",
+  adminRegionIndexUrl: "./data/shanghai-admin-region-index.json",
+  regionBuildingGridFilterLimit: 4500,
   initialView: {
     center: [121.4903, 31.2397],
     zoom: 14.55,

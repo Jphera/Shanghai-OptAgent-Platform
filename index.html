@@ -68,6 +68,22 @@
             <div class="section-title">Selected comparison</div>
             <div id="scenarioNarrative" class="narrative"></div>
           </div>
+          <div class="control-block region-filter-block">
+            <span class="control-label">Region filter</span>
+            <details class="region-filter-dropdown">
+              <summary>
+                <span data-region-filter-summary>Loading regions...</span>
+                <span class="chevron" aria-hidden="true">⌄</span>
+              </summary>
+              <div class="region-filter-menu">
+                <div class="region-filter-actions">
+                  <button type="button" data-region-select-all>Select all</button>
+                  <button type="button" data-region-clear-all>Clear</button>
+                </div>
+                <div class="region-filter-list" data-region-filter-list></div>
+              </div>
+            </details>
+          </div>
         </div>
 
         <div class="panel-section" id="panel-layers">
@@ -81,6 +97,22 @@
               Full opportunity grids show citywide candidate potential. Selected allocation grids show the
               budget-constrained NSGA-II portfolio for the active model comparison.
             </p>
+          </div>
+          <div class="control-block region-filter-block">
+            <span class="control-label">Region filter</span>
+            <details class="region-filter-dropdown">
+              <summary>
+                <span data-region-filter-summary>Loading regions...</span>
+                <span class="chevron" aria-hidden="true">⌄</span>
+              </summary>
+              <div class="region-filter-menu">
+                <div class="region-filter-actions">
+                  <button type="button" data-region-select-all>Select all</button>
+                  <button type="button" data-region-clear-all>Clear</button>
+                </div>
+                <div class="region-filter-list" data-region-filter-list></div>
+              </div>
+            </details>
           </div>
           <div class="control-block">
             <label for="strategyFilter">Strategy filter</label>
@@ -125,6 +157,22 @@
             <p class="summary-text">
               WRF representative-week outputs and LCZ sensitivity are mapped as 500 m weather evidence for temperature, humidity, solar radiation, wind, and morphology sensitivity.
             </p>
+          </div>
+          <div class="control-block region-filter-block">
+            <span class="control-label">Region filter</span>
+            <details class="region-filter-dropdown">
+              <summary>
+                <span data-region-filter-summary>Loading regions...</span>
+                <span class="chevron" aria-hidden="true">⌄</span>
+              </summary>
+              <div class="region-filter-menu">
+                <div class="region-filter-actions">
+                  <button type="button" data-region-select-all>Select all</button>
+                  <button type="button" data-region-clear-all>Clear</button>
+                </div>
+                <div class="region-filter-list" data-region-filter-list></div>
+              </div>
+            </details>
           </div>
           <div class="control-block metric-block">
             <span class="control-label">WRF representative-week weather</span>
@@ -177,12 +225,28 @@
               <option value="combined">Individual buildings + aggregated grid cells</option>
             </select>
           </div>
+          <div class="control-block region-filter-block">
+            <span class="control-label">Step 2: Select Areas</span>
+            <details class="region-filter-dropdown">
+              <summary>
+                <span data-region-filter-summary>Loading regions...</span>
+                <span class="chevron" aria-hidden="true">⌄</span>
+              </summary>
+              <div class="region-filter-menu">
+                <div class="region-filter-actions">
+                  <button type="button" data-region-select-all>Select all</button>
+                  <button type="button" data-region-clear-all>Clear</button>
+                </div>
+                <div class="region-filter-list" data-region-filter-list></div>
+              </div>
+            </details>
+          </div>
           <div class="control-block">
-            <span class="control-label">Step 2: Select Representative Week</span>
+            <span class="control-label">Step 3: Select Representative Week</span>
             <div id="energySeasonButtons" class="segmented compact three"></div>
           </div>
           <div class="control-block">
-            <label class="control-label" for="energyTypeSelect">Step 3: Select Building Types</label>
+            <label class="control-label" for="energyTypeSelect">Step 4: Select Building Types</label>
             <select id="energyTypeSelect">
               <option value="all" selected>All building types</option>
             </select>
@@ -205,6 +269,17 @@
               Quantitative evidence behind the Shanghai retrofit allocation. OptAgent only orchestrates and explains
               these results &mdash; the energy and carbon numbers come from the UBEM + NSGA-II/MILP + EnergyPlus pipeline.
             </p>
+          </div>
+          <div class="control-block agent-workbench">
+            <div class="section-title">Agent decision pipeline</div>
+            <div id="agentCompactStatus" class="agent-compact-status"></div>
+            <div id="agentCards" class="agent-card-grid"></div>
+            <div id="agentRunState" class="agent-run-state"></div>
+            <div id="agentTrace" class="agent-trace"></div>
+            <div class="section-title">Evidence lineage</div>
+            <div id="agentEvidence" class="agent-evidence-lineage"></div>
+            <div class="section-title">Critic guardrails</div>
+            <div id="agentGuardrails" class="agent-guardrails"></div>
           </div>
           <div class="control-block">
             <div class="section-title">Selected map evidence</div>

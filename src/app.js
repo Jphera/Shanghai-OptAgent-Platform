@@ -109,6 +109,14 @@ const PERFORMANCE_DEFAULTS = {
   maxEnergyFeatureStates: 2200
 };
 
+const REGION_GRID_KINDS = {
+  opportunity: "opportunity",
+  allocation: "opportunity",
+  microclimate: "microclimate",
+  energy: "energy",
+  buildings: "energy"
+};
+
 const ENERGY_METRICS = {
   diff_pct: {
     label: "Difference (Microclimate vs non-microclimate)",
@@ -257,6 +265,7 @@ const state = {
   colorMetric: "strategy",
   activeBenchmarkModel: "deepseek:deepseek-chat",
   activeArchetypeKey: null,
+  activeParetoIndex: 0,
   popup: null,
   selectedOpportunity: null,
   selectedBuilding: null,
@@ -292,7 +301,11 @@ const state = {
   buildingLayerError: null,
   buildingLayerStage: "not-started",
   buildingLayerEventsBound: false,
-  buildingLayerRetries: 0
+  buildingLayerRetries: 0,
+  regions: null,
+  selectedRegionIds: new Set(),
+  regionGridFilterCache: new Map(),
+  regionFilterInitialized: false
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -307,6 +320,8 @@ async function init() {
   state.data = await loadData();
   state.microclimate = await loadMicroclimateData();
   state.microTimeseriesManifest = await loadMicroTimeseriesManifest();
+  state.regions = await loadRegionData();
+  renderRegionFilter();
   renderOverview();
   renderMicroclimatePanel();
   renderEnergyPanel();
@@ -351,6 +366,28 @@ async function loadMicroTimeseriesManifest() {
     console.warn(error);
     return null;
   }
+}
+
+async function fetchJsonOptional(url, label) {
+  if (!url) return null;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Unable to load ${label}: ${response.status}`);
+    return response.json();
+  } catch (error) {
+    console.warn(error);
+    return null;
+  }
+}
+
+async function loadRegionData() {
+  const [majorGeojson, localGeojson, index] = await Promise.all([
+    fetchJsonOptional(CONFIG.adminMajorRegionsUrl, "major administrative regions"),
+    fetchJsonOptional(CONFIG.adminLocalRegionsUrl, "local administrative regions"),
+    fetchJsonOptional(CONFIG.adminRegionIndexUrl, "administrative region index")
+  ]);
+  if (!majorGeojson || !localGeojson || !index) return null;
+  return { majorGeojson, localGeojson, index };
 }
 
 async function ensureEnergyData() {
@@ -560,6 +597,289 @@ function buildingContextForPrompt(p) {
   };
 }
 
+function regionFeatures() {
+  return state.regions?.localGeojson?.features || [];
+}
+
+function majorRegionFeatures() {
+  return state.regions?.majorGeojson?.features || [];
+}
+
+function regionId(feature) {
+  return String(feature?.properties?.region_id || "");
+}
+
+function regionName(feature) {
+  return feature?.properties?.region_name || regionId(feature);
+}
+
+function regionGroupId(feature) {
+  return String(feature?.properties?.region_group || regionId(feature));
+}
+
+function regionGroupName(groupId) {
+  const feature = majorRegionFeatures().find((item) => regionId(item) === String(groupId));
+  return feature?.properties?.region_name || String(groupId || "Region");
+}
+
+function regionGroups() {
+  const groups = new Map();
+  regionFeatures().forEach((feature) => {
+    const groupId = regionGroupId(feature);
+    if (!groups.has(groupId)) {
+      groups.set(groupId, {
+        id: groupId,
+        label: feature.properties.region_group_name || regionGroupName(groupId),
+        ids: []
+      });
+    }
+    groups.get(groupId).ids.push(regionId(feature));
+  });
+  return Array.from(groups.values()).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function regionIds() {
+  return regionFeatures().map(regionId).filter(Boolean);
+}
+
+function selectedRegionCount() {
+  return state.selectedRegionIds.size;
+}
+
+function allRegionsSelected() {
+  const ids = regionIds();
+  return ids.length > 0 && selectedRegionCount() === ids.length;
+}
+
+function regionFalseFilter(property = "grid_id") {
+  return ["==", ["get", property], "__none__"];
+}
+
+function selectedRegionAllows(regionIdValue) {
+  const id = String(regionIdValue || "");
+  if (!regionFeatures().length) return true;
+  if (!id) return false;
+  if (allRegionsSelected()) return true;
+  if (!selectedRegionCount()) return false;
+  return state.selectedRegionIds.has(id);
+}
+
+function regionIdsForGroup(groupId) {
+  return regionFeatures()
+    .filter((feature) => regionGroupId(feature) === String(groupId))
+    .map(regionId);
+}
+
+function selectedMajorRegionIds() {
+  const ids = new Set();
+  regionFeatures().forEach((feature) => {
+    if (state.selectedRegionIds.has(regionId(feature))) ids.add(regionGroupId(feature));
+  });
+  return Array.from(ids);
+}
+
+function updateRegionFilterSummary() {
+  const summaries = Array.from(document.querySelectorAll("[data-region-filter-summary]"));
+  if (!summaries.length) return;
+  const total = regionFeatures().length;
+  const count = selectedRegionCount();
+  let text = "Loading regions...";
+  if (total && count === total) text = `All areas (${total})`;
+  else if (total && !count) text = "No areas selected";
+  else if (total) text = `${count} of ${total} areas`;
+  summaries.forEach((node) => {
+    node.textContent = text;
+  });
+}
+
+function renderRegionFilter() {
+  const features = regionFeatures();
+  const lists = Array.from(document.querySelectorAll("[data-region-filter-list]"));
+  if (!lists.length) return;
+  if (!features.length) {
+    lists.forEach((list) => {
+      list.innerHTML = `<p class="summary-text">Administrative regions are not loaded.</p>`;
+    });
+    updateRegionFilterSummary();
+    return;
+  }
+  if (!state.regionFilterInitialized) {
+    state.selectedRegionIds = new Set(features.map(regionId));
+    state.regionFilterInitialized = true;
+  }
+  const groupMarkup = regionGroups()
+    .map((group) => {
+      const major = majorRegionFeatures().find((feature) => regionId(feature) === group.id);
+      const opportunity = Number(major?.properties?.opportunity_grid_count || 0);
+      return `
+        <label class="region-filter-option region-filter-group-option">
+          <input type="checkbox" data-region-group="${escapeHtml(group.id)}" checked />
+          <span>${escapeHtml(group.label)}</span>
+          <strong>${formatNumber(opportunity || group.ids.length, 0)}</strong>
+        </label>
+      `;
+    })
+    .join("");
+  const localMarkup = features
+    .slice()
+    .sort((a, b) => `${regionGroupName(regionGroupId(a))} ${regionName(a)}`.localeCompare(`${regionGroupName(regionGroupId(b))} ${regionName(b)}`))
+    .map((feature) => {
+      const id = regionId(feature);
+      const count = Number(feature.properties.opportunity_grid_count || feature.properties.microclimate_grid_count || 0);
+      return `
+        <label class="region-filter-option">
+          <input type="checkbox" value="${escapeHtml(id)}" data-region-id="${escapeHtml(id)}" checked />
+          <span>${escapeHtml(regionName(feature))}</span>
+          <strong>${formatNumber(count, 0)}</strong>
+        </label>
+      `;
+    })
+    .join("");
+  const markup = `
+    <div class="region-filter-section">
+      <div class="region-filter-section-title">Major regions</div>
+      ${groupMarkup}
+    </div>
+    <div class="region-filter-section">
+      <div class="region-filter-section-title">Local regions</div>
+      ${localMarkup}
+    </div>
+  `;
+  lists.forEach((list) => {
+    list.innerHTML = markup;
+  });
+  syncRegionCheckboxes();
+}
+
+function syncRegionCheckboxes() {
+  Array.from(document.querySelectorAll("[data-region-filter-list]")).forEach((list) => {
+    list.querySelectorAll("input[data-region-id]").forEach((input) => {
+      input.checked = state.selectedRegionIds.has(input.value);
+    });
+    list.querySelectorAll("input[data-region-group]").forEach((input) => {
+      const ids = regionIdsForGroup(input.dataset.regionGroup);
+      const checked = ids.filter((id) => state.selectedRegionIds.has(id)).length;
+      input.checked = ids.length > 0 && checked === ids.length;
+      input.indeterminate = checked > 0 && checked < ids.length;
+    });
+  });
+  updateRegionFilterSummary();
+}
+
+function clearRegionFilterCache() {
+  state.regionGridFilterCache = new Map();
+}
+
+function selectedGridIdsForKind(kind) {
+  const gridKind = REGION_GRID_KINDS[kind] || kind;
+  if (!state.regions?.index?.gridIndex?.[gridKind]) return null;
+  if (!regionFeatures().length || allRegionsSelected()) return null;
+  const cacheKey = `${gridKind}:${Array.from(state.selectedRegionIds).sort().join("|")}`;
+  if (state.regionGridFilterCache.has(cacheKey)) return state.regionGridFilterCache.get(cacheKey);
+  if (!selectedRegionCount()) {
+    state.regionGridFilterCache.set(cacheKey, []);
+    return [];
+  }
+  const localIndex = state.regions.index.gridIndex[gridKind].local || {};
+  const ids = [];
+  state.selectedRegionIds.forEach((regionIdValue) => {
+    ids.push(...(localIndex[regionIdValue] || []));
+  });
+  const uniqueIds = Array.from(new Set(ids.map((id) => Number(id)).filter(Number.isFinite)));
+  state.regionGridFilterCache.set(cacheKey, uniqueIds);
+  return uniqueIds;
+}
+
+function regionGridFilterExpression(kind) {
+  const ids = selectedGridIdsForKind(kind);
+  if (ids === null) return null;
+  if (!ids.length) return ["==", ["get", "grid_id"], -999999];
+  return ["in", ["to-number", ["get", "grid_id"]], ["literal", ids]];
+}
+
+function buildingRegionFilterExpression() {
+  const ids = selectedGridIdsForKind("buildings");
+  if (ids === null) return null;
+  if (!ids.length) return ["==", ["get", "TARGET_FID"], -999999];
+  const limit = Number(CONFIG.regionBuildingGridFilterLimit || 4500);
+  if (ids.length > limit) return null;
+  return [
+    "in",
+    ["to-number", ["coalesce", ["get", "grid_id"], ["get", "TARGET_FID"], ["get", "target_fid"]]],
+    ["literal", ids]
+  ];
+}
+
+function regionMajorLineFilterExpression() {
+  if (!majorRegionFeatures().length) return regionFalseFilter("region_id");
+  if (allRegionsSelected()) return null;
+  const ids = selectedMajorRegionIds();
+  if (!ids.length) return regionFalseFilter("region_id");
+  return ["in", ["get", "region_id"], ["literal", ids]];
+}
+
+function regionSelectedLocalFilterExpression() {
+  if (!regionFeatures().length || allRegionsSelected() || !selectedRegionCount()) return regionFalseFilter("region_id");
+  return ["in", ["get", "region_id"], ["literal", Array.from(state.selectedRegionIds)]];
+}
+
+function regionBoundsForIds(ids) {
+  const selected = new Set(ids.map(String));
+  let bounds = null;
+  regionFeatures().forEach((feature) => {
+    if (!selected.has(regionId(feature))) return;
+    const raw = feature.properties?.bounds;
+    if (Array.isArray(raw) && raw.length === 4) {
+      bounds = extendBounds(bounds, [
+        [Number(raw[0]), Number(raw[1])],
+        [Number(raw[2]), Number(raw[3])]
+      ]);
+    } else {
+      bounds = extendBounds(bounds, featureBounds(feature));
+    }
+  });
+  return bounds;
+}
+
+function focusRegionIds(ids, maxZoom = 13.8) {
+  if (!state.map || !ids.length) return;
+  const bounds = regionBoundsForIds(ids);
+  if (!bounds) return;
+  const center = [(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2];
+  if (ids.length === 1) {
+    state.map.easeTo({ center, zoom: maxZoom, pitch: 45, duration: 850, essential: true });
+    return;
+  }
+  const compact = window.innerWidth < 900;
+  state.map.fitBounds(bounds, {
+    padding: {
+      top: 70,
+      bottom: 70,
+      left: compact ? 34 : Math.min(430, Math.round(window.innerWidth * 0.26)),
+      right: window.innerWidth > 1120 ? Math.min(390, Math.round(window.innerWidth * 0.22)) : 34
+    },
+    maxZoom,
+    duration: 850,
+    essential: true
+  });
+}
+
+function syncRegionLayers() {
+  if (!state.map) return;
+  const show = Boolean(regionFeatures().length);
+  setLayerVisibility(["region-major-line"], show);
+  setLayerVisibility(["region-local-line", "region-selected-fill"], show && !allRegionsSelected());
+  if (state.map.getLayer("region-major-line")) {
+    state.map.setFilter("region-major-line", regionMajorLineFilterExpression());
+  }
+  if (state.map.getLayer("region-local-line")) {
+    state.map.setFilter("region-local-line", regionSelectedLocalFilterExpression());
+  }
+  if (state.map.getLayer("region-selected-fill")) {
+    state.map.setFilter("region-selected-fill", regionSelectedLocalFilterExpression());
+  }
+}
+
 function hydrateSelectedBuildingEnergy(bldgId) {
   if (!bldgId) return;
   loadBuildingEnergyRecord(bldgId)
@@ -679,6 +999,17 @@ function addMapSourcesAndLayers() {
     data: state.data.boundaryGeojson
   });
 
+  if (state.regions?.majorGeojson && state.regions?.localGeojson) {
+    map.addSource("admin-major-regions", {
+      type: "geojson",
+      data: state.regions.majorGeojson
+    });
+    map.addSource("admin-local-regions", {
+      type: "geojson",
+      data: state.regions.localGeojson
+    });
+  }
+
   map.addSource("allocation", {
     type: "geojson",
     data: state.data.allocationGeojson,
@@ -727,6 +1058,44 @@ function addMapSourcesAndLayers() {
       "line-opacity": 0.72
     }
   });
+
+  if (map.getSource("admin-major-regions")) {
+    map.addLayer({
+      id: "region-selected-fill",
+      type: "fill",
+      source: "admin-local-regions",
+      filter: regionSelectedLocalFilterExpression(),
+      layout: { visibility: "none" },
+      paint: {
+        "fill-color": "#2f8fe0",
+        "fill-opacity": 0.12
+      }
+    });
+    map.addLayer({
+      id: "region-major-line",
+      type: "line",
+      source: "admin-major-regions",
+      filter: regionMajorLineFilterExpression(),
+      paint: {
+        "line-color": "#174c5a",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 8, 0.7, 12, 1.5, 15, 2.4],
+        "line-opacity": 0.54
+      }
+    });
+    map.addLayer({
+      id: "region-local-line",
+      type: "line",
+      source: "admin-local-regions",
+      minzoom: 10.6,
+      filter: regionSelectedLocalFilterExpression(),
+      layout: { visibility: "none" },
+      paint: {
+        "line-color": "#2f8fe0",
+        "line-width": ["interpolate", ["linear"], ["zoom"], 10.6, 0.45, 14, 1.1],
+        "line-opacity": 0.55
+      }
+    });
+  }
 
   map.addLayer({
     id: "opportunity-fill",
@@ -884,6 +1253,10 @@ function addMapSourcesAndLayers() {
     }
   });
 
+  ["region-major-line", "region-local-line"].forEach((layer) => {
+    if (map.getLayer(layer)) map.moveLayer(layer, "allocation-labels");
+  });
+
   map.on("click", "allocation-fill", (event) => {
     const feature = event.features && event.features[0];
     if (!feature) return;
@@ -918,6 +1291,46 @@ function addMapSourcesAndLayers() {
     map.getCanvas().style.cursor = "";
   });
 
+  if (map.getLayer("region-major-line")) {
+    map.on("click", "region-major-line", (event) => {
+      const feature = event.features && event.features[0];
+      const id = feature && regionId(feature);
+      if (!id) return;
+      const ids = regionIdsForGroup(id);
+      state.selectedRegionIds = new Set(ids);
+      clearRegionFilterCache();
+      syncRegionCheckboxes();
+      applyRegionFilter();
+      focusRegionIds(ids, 11.8);
+    });
+    map.on("mouseenter", "region-major-line", () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", "region-major-line", () => {
+      map.getCanvas().style.cursor = "";
+    });
+  }
+
+  ["region-selected-fill", "region-local-line"].forEach((layer) => {
+    if (!map.getLayer(layer)) return;
+    map.on("click", layer, (event) => {
+      const feature = event.features && event.features[0];
+      const id = feature && regionId(feature);
+      if (!id) return;
+      state.selectedRegionIds = new Set([id]);
+      clearRegionFilterCache();
+      syncRegionCheckboxes();
+      applyRegionFilter();
+      focusRegionIds([id], 13.7);
+    });
+    map.on("mouseenter", layer, () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
+    map.on("mouseleave", layer, () => {
+      map.getCanvas().style.cursor = "";
+    });
+  });
+
   if (map.getLayer("microclimate-fill")) {
     map.on("click", "microclimate-fill", (event) => {
       const feature = event.features && event.features[0];
@@ -935,6 +1348,7 @@ function addMapSourcesAndLayers() {
   }
 
   applyMapFilters();
+  syncRegionLayers();
   syncMicroclimateLayer();
   configureBuildingToggle();
   renderLegend();
@@ -1620,17 +2034,33 @@ function updateAllocationForScenario() {
 
 function applyMapFilters() {
   if (!state.map || !state.map.getLayer("allocation-fill")) return;
-  const filters = ["all"];
+  const filters = [];
   if (state.strategyFilter !== "all") {
     filters.push(["==", ["get", "strategy_id"], state.strategyFilter]);
   }
-  state.map.setFilter("allocation-fill", filters);
-  state.map.setFilter("allocation-line", filters);
-  state.map.setFilter("allocation-labels", filters);
+  const allocationRegionFilter = regionGridFilterExpression("allocation");
+  if (allocationRegionFilter) filters.push(allocationRegionFilter);
+  const allocationFilter = filters.length ? ["all", ...filters] : null;
+  state.map.setFilter("allocation-fill", allocationFilter);
+  state.map.setFilter("allocation-line", allocationFilter);
+  state.map.setFilter("allocation-labels", allocationFilter);
+
+  const opportunityFilter = regionGridFilterExpression("opportunity");
+  ["opportunity-fill", "opportunity-line"].forEach((layer) => {
+    if (state.map.getLayer(layer)) state.map.setFilter(layer, opportunityFilter);
+  });
 
   const color =
     state.colorMetric === "strategy" ? strategyColorExpression() : metricColorExpression(state.colorMetric);
   state.map.setPaintProperty("allocation-fill", "fill-color", color);
+}
+
+function applyRegionFilter() {
+  applyMapFilters();
+  syncMapLayerVisibility();
+  renderRegionFilter();
+  renderMapLegend();
+  renderAgentTrace(buildAgentTrace("Apply administrative-region filter."));
 }
 
 function wirePanels() {
@@ -1695,8 +2125,54 @@ function wireLayerControls() {
     syncMapLayerVisibility();
     state.map.easeTo({ pitch: 0, bearing: 0, duration: 600 });
   });
+  wireRegionFilterControls();
   wireMicroclimateControls();
   wireEnergyControls();
+}
+
+function wireRegionFilterControls() {
+  document.querySelectorAll("[data-region-filter-list]").forEach((list) => {
+    list.addEventListener("change", (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement) || input.type !== "checkbox") return;
+      const groupId = input.dataset.regionGroup;
+      if (groupId) {
+        const ids = regionIdsForGroup(groupId);
+        ids.forEach((id) => {
+          if (input.checked) state.selectedRegionIds.add(id);
+          else state.selectedRegionIds.delete(id);
+        });
+        clearRegionFilterCache();
+        syncRegionCheckboxes();
+        applyRegionFilter();
+        if (input.checked) focusRegionIds(ids, 11.8);
+        return;
+      }
+      const id = input.dataset.regionId || input.value;
+      if (input.checked) state.selectedRegionIds.add(id);
+      else state.selectedRegionIds.delete(id);
+      clearRegionFilterCache();
+      syncRegionCheckboxes();
+      applyRegionFilter();
+      if (input.checked) focusRegionIds([id], 13.7);
+    });
+  });
+  document.querySelectorAll("[data-region-select-all]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedRegionIds = new Set(regionIds());
+      clearRegionFilterCache();
+      syncRegionCheckboxes();
+      applyRegionFilter();
+    });
+  });
+  document.querySelectorAll("[data-region-clear-all]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedRegionIds = new Set();
+      clearRegionFilterCache();
+      syncRegionCheckboxes();
+      applyRegionFilter();
+    });
+  });
 }
 
 function setLayerVisibility(layerIds, visible) {
@@ -1747,8 +2223,12 @@ function syncMapLayerVisibility() {
   setLayerVisibility(["building-fill", "building-line", "building-selected-line"], showBuildings);
   setLayerVisibility(["microclimate-fill", "microclimate-line", "microclimate-selected-line"], showMicro);
   setLayerVisibility(["energy-grid-fill", "energy-grid-line", "energy-grid-selected-line"], showEnergyGrid);
+  syncRegionLayers();
 
   if (state.map.getLayer("building-fill")) {
+    const buildingFilter = buildingRegionFilterExpression();
+    state.map.setFilter("building-fill", buildingFilter);
+    if (state.map.getLayer("building-line")) state.map.setFilter("building-line", buildingFilter);
     state.map.setPaintProperty("building-fill", "fill-extrusion-color", buildingFillColorExpression());
     state.map.setPaintProperty("building-fill", "fill-extrusion-opacity", buildingExtrusionOpacityExpression());
   }
@@ -1756,6 +2236,9 @@ function syncMapLayerVisibility() {
     scheduleVisibleBuildingEnergyHydration();
   }
   if (state.map.getLayer("microclimate-fill")) {
+    const microFilter = regionGridFilterExpression("microclimate");
+    state.map.setFilter("microclimate-fill", microFilter);
+    if (state.map.getLayer("microclimate-line")) state.map.setFilter("microclimate-line", microFilter);
     state.map.setPaintProperty("microclimate-fill", "fill-color", microclimateColorExpression());
     state.map.setPaintProperty("microclimate-fill", "fill-opacity", state.microGridOpacity);
   }
@@ -1764,6 +2247,9 @@ function syncMapLayerVisibility() {
     state.map.setFilter("microclimate-selected-line", ["==", ["get", "grid_id"], id]);
   }
   if (state.map.getLayer("energy-grid-fill")) {
+    const energyFilter = regionGridFilterExpression("energy");
+    state.map.setFilter("energy-grid-fill", energyFilter);
+    if (state.map.getLayer("energy-grid-line")) state.map.setFilter("energy-grid-line", energyFilter);
     state.map.setPaintProperty("energy-grid-fill", "fill-color", energyColorExpression());
     state.map.setPaintProperty("energy-grid-fill", "fill-opacity", state.energyGridOpacity);
   }
@@ -1810,7 +2296,11 @@ function renderOverview() {
     [formatNumber(metrics.optimization_units), "semantic decision units"],
     [formatNumber(metrics.refined_feasible_unit_strategy_pairs), "feasible unit-strategy pairs"],
     [`${formatNumber(metrics.feasible_candidate_share_proposed_pct, 1)}%`, "candidate feasibility rate"],
-    [`${formatNumber(metrics.mean_llm_confidence, 3)}`, "mean LLM semantic confidence"]
+    [`${formatNumber(metrics.mean_llm_confidence, 3)}`, "mean LLM semantic confidence"],
+    [
+      `${formatNumber(majorRegionFeatures().length, 0)} / ${formatNumber(regionFeatures().length, 0)}`,
+      "major / local regions"
+    ]
   ];
   document.getElementById("metricGrid").innerHTML = cards
     .map(([value, label]) => `<div class="metric-card"><strong>${value}</strong><span>${label}</span></div>`)
@@ -2528,7 +3018,7 @@ function renderEvidence() {
   renderModelBenchmark();
   renderArchetypeExplorer();
   safeRender(renderSemanticSankey);
-  safeRender(renderParetoExplorer);
+  safeRender(renderParetoExplorerInteractive);
   renderPolicyExplorer();
   renderBudgetChart();
   safeRender(renderFullYearCurves);
@@ -2828,6 +3318,75 @@ function renderParetoExplorer() {
 }
 
 // §3.5 / Fig.18 — full-year TMY EUI validation vs Shanghai 2023 public-building monitoring.
+function renderParetoExplorerInteractive() {
+  const container = document.getElementById("paretoExplorer");
+  if (!container) return;
+  const rows = (state.data.paretoFront || []).filter(
+    (row) => Number.isFinite(Number(row.annual_carbon_reduction_tco2))
+  );
+  if (!rows.length) {
+    container.innerHTML = `<p class="narrative">Pareto front data are not loaded.</p>`;
+    return;
+  }
+  const sorted = rows
+    .slice()
+    .sort((a, b) => Number(b.annual_carbon_reduction_tco2 || 0) - Number(a.annual_carbon_reduction_tco2 || 0));
+  const best = sorted[0];
+  const maxCarbon = Number(best.annual_carbon_reduction_tco2 || 0);
+  const step = Math.max(1, Math.floor(sorted.length / 7));
+  const sample = sorted.filter((_, index) => index % step === 0).slice(0, 8);
+  if (state.activeParetoIndex >= sample.length) state.activeParetoIndex = 0;
+  const active = sample[state.activeParetoIndex] || sample[0];
+
+  container.innerHTML = `
+    <p class="narrative">
+      ${formatNumber(sorted.length)} Pareto solutions at ~1.0&nbsp;billion&nbsp;RMB. Best-carbon solution:
+      <strong>${formatNumber(maxCarbon / 1000, 1)} ktCO2/yr</strong> across
+      ${formatNumber(best.selected_buildings || 0)} buildings, ${formatNumber(best.selected_units || 0)} units.
+    </p>
+    <div class="pareto-list">
+      ${sample
+        .map((row, index) => {
+          const carbon = Number(row.annual_carbon_reduction_tco2 || 0);
+          const width = maxCarbon ? (carbon / maxCarbon) * 100 : 0;
+          const share = Number(row.largest_strategy_budget_share || 0) * 100;
+          return `
+            <button class="bar-row pareto-row ${index === state.activeParetoIndex ? "active" : ""}" type="button" data-pareto-index="${index}">
+              <span>${formatNumber(row.selected_buildings || 0)} bldg</span>
+              <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
+              <span>${formatNumber(carbon / 1000, 1)} kt | cap ${formatNumber(share, 0)}%</span>
+            </button>
+          `;
+        })
+        .join("")}
+    </div>
+    <div class="list-item">
+      <strong>Active Pareto solution</strong>
+      <p>${formatNumber(active.selected_units || 0)} units, ${formatNumber(active.selected_buildings || 0)} buildings, ${formatCurrency(active.budget_rmb || 0)} budget, ${formatNumber(Number(active.annual_carbon_reduction_tco2 || 0) / 1000, 1)} ktCO2/yr.</p>
+      <button class="wide-button inline-action" type="button" data-pareto-chat>Ask OptAgent about this Pareto solution</button>
+    </div>
+  `;
+  container.querySelectorAll("[data-pareto-index]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeParetoIndex = Number(button.dataset.paretoIndex) || 0;
+      renderParetoExplorerInteractive();
+      const row = sample[state.activeParetoIndex] || sample[0];
+      renderAgentTrace(paretoAgentTrace(row));
+    });
+  });
+  container.querySelector("[data-pareto-chat]")?.addEventListener("click", () => {
+    const row = sample[state.activeParetoIndex] || sample[0];
+    const message = "Explain this Pareto solution with the Critic Agent";
+    openAgentModal();
+    addChatMessage("user", message);
+    addChatMessage(
+      "assistant",
+      `This Pareto solution selects ${formatNumber(row.selected_buildings, 0)} buildings for ${formatNumber(Number(row.annual_carbon_reduction_tco2 || 0) / 1000, 1)} ktCO2/yr under a ${formatCurrency(row.budget_rmb || 0)} budget. Critic attention goes to strategy concentration (${formatNumber(Number(row.largest_strategy_budget_share || 0) * 100, 1)}% largest share) and whether coverage-carbon trade-offs remain interpretable.`
+    );
+    renderAgentTrace(paretoAgentTrace(row));
+  });
+}
+
 function renderFullYearValidation() {
   const container = document.getElementById("fullYearValidation");
   if (!container) return;
@@ -3195,6 +3754,14 @@ function buildEvidenceRows(prompt, selected, building, scenario) {
       value: prompt.length > 48 ? `${prompt.slice(0, 48)}...` : prompt
     },
     {
+      label: "Region scope",
+      value: activeRegionSummary()
+        ? allRegionsSelected()
+          ? "All Shanghai districts"
+          : `${selectedRegionCount()} local regions in ${selectedMajorRegionIds().map(regionGroupName).join(", ")}`
+        : "region layer n/a"
+    },
+    {
       label: "Building tileset",
       value: cfg.enabled ? `${tileset} / ${cfg.sourceLayer || "source-layer n/a"}` : "not configured",
       kind: cfg.enabled ? "" : "warn"
@@ -3295,6 +3862,110 @@ function highlightAgentHotspots(kind = "selected") {
   state.map.setFilter("agent-highlight-fill", ["in", ["get", "grid_id"], ["literal", ids]]);
 }
 
+function benchmarkAgentTrace(spec) {
+  const rows = state.data.modelBenchmark || [];
+  const overall = rows.find((row) => row.model_spec === spec && row.task_group === "OVERALL");
+  const tasks = rows.filter((row) => row.model_spec === spec && row.task_group !== "OVERALL");
+  const bestTask = tasks.slice().sort((a, b) => Number(b.mean_score || 0) - Number(a.mean_score || 0))[0];
+  const weakTask = tasks.slice().sort((a, b) => Number(a.mean_score || 0) - Number(b.mean_score || 0))[0];
+  return [
+    agentStepObject(
+      "data",
+      "load_agent_benchmark",
+      `${modelShortLabel(spec)} is evaluated across ${formatNumber(tasks.length, 0)} agent task groups with JSON validity, score and latency records.`
+    ),
+    agentStepObject(
+      "knowledge",
+      "bind_task_rubrics",
+      `Rubrics cover semantic unit construction, RAG constraint extraction, tool planning and critic audit rather than generic chat quality.`
+    ),
+    agentStepObject(
+      "scenario",
+      "compare_model_roles",
+      bestTask ? `Strongest task: ${taskShortLabel(bestTask.task_group)} at score ${formatNumber(bestTask.mean_score, 3)}.` : "Task rows are not available."
+    ),
+    agentStepObject(
+      "optimization",
+      "rank_agent_backends",
+      overall
+        ? `Overall score ${formatNumber(overall.mean_score, 3)}, JSON valid ${formatNumber(overall.parse_valid_rate * 100, 0)}%, latency ${formatNumber(overall.mean_elapsed_sec, 2)} s/case.`
+        : "Overall benchmark row is not available."
+    ),
+    agentStepObject(
+      "critic",
+      "audit_backend_risk",
+      weakTask
+        ? `Weakest task: ${taskShortLabel(weakTask.task_group)}. Treat model selection as a reliability decision, not only a score leaderboard.`
+        : "No critic warning for this benchmark row.",
+      null,
+      weakTask && Number(weakTask.parse_valid_rate || 1) < 0.9 ? "warning" : ""
+    )
+  ];
+}
+
+function archetypeAgentTrace(active, strategies) {
+  const top = strategies && strategies[0];
+  return [
+    agentStepObject(
+      "data",
+      "load_refined_archetype",
+      `${active.fine_function_en || active.refined_function_label || active.row_key} contributes ${formatNumber(active.selected_annual_carbon_tco2, 0)} tCO2/yr in selected abatement.`
+    ),
+    agentStepObject(
+      "knowledge",
+      "retrieve_strategy_library",
+      `Function, vintage and thermal-template constraints determine which retrofit families remain applicable.`
+    ),
+    agentStepObject(
+      "scenario",
+      "rank_candidate_strategies",
+      top ? `Top-ranked candidate is ${strategyLabel(top.strategy_id)} with priority ${formatNumber(top.priority_score, 3)}.` : "No ranked strategies are loaded."
+    ),
+    agentStepObject(
+      "optimization",
+      "bind_nsga2_selection",
+      `${formatNumber(active.selected_buildings, 0)} buildings from this archetype appear in the selected portfolio evidence.`
+    ),
+    agentStepObject(
+      "critic",
+      "check_archetype_transferability",
+      `Critic checks whether this archetype-specific ranking should be generalized citywide or kept as a local decision-unit rule.`
+    )
+  ];
+}
+
+function paretoAgentTrace(row) {
+  return [
+    agentStepObject(
+      "data",
+      "load_pareto_solution",
+      `Pareto solution selects ${formatNumber(row.selected_buildings, 0)} buildings and ${formatNumber(row.selected_units, 0)} units.`
+    ),
+    agentStepObject(
+      "knowledge",
+      "bind_budget_constraint",
+      `Budget is ${formatCurrency(row.budget_rmb || 0)} with strategy-share and feasibility constraints held fixed.`
+    ),
+    agentStepObject(
+      "scenario",
+      "compare_objectives",
+      `Coverage, cost and carbon are negotiated instead of optimizing carbon alone.`
+    ),
+    agentStepObject(
+      "optimization",
+      "score_pareto_solution",
+      `Annual carbon reduction is ${formatNumber(Number(row.annual_carbon_reduction_tco2 || 0) / 1000, 1)} ktCO2/yr.`
+    ),
+    agentStepObject(
+      "critic",
+      "audit_portfolio_concentration",
+      `Largest strategy budget share is ${formatNumber(Number(row.largest_strategy_budget_share || 0) * 100, 1)}%.`,
+      null,
+      Number(row.largest_strategy_budget_share || 0) > 0.351 ? "risk" : ""
+    )
+  ];
+}
+
 function renderModelBenchmark() {
   const rows = state.data.modelBenchmark || [];
   const overall = rows
@@ -3357,6 +4028,7 @@ function renderModelBenchmark() {
     button.addEventListener("click", () => {
       state.activeBenchmarkModel = decodeURIComponent(button.dataset.modelSpec);
       renderModelBenchmark();
+      renderAgentTrace(benchmarkAgentTrace(state.activeBenchmarkModel));
     });
   });
   container.querySelectorAll("[data-model-chat]").forEach((button) => {
@@ -3366,6 +4038,7 @@ function renderModelBenchmark() {
       openAgentModal();
       addChatMessage("user", message);
       addChatMessage("assistant", summarizeModel(spec));
+      renderAgentTrace(benchmarkAgentTrace(spec));
     });
   });
 }
@@ -3425,12 +4098,37 @@ function renderArchetypeExplorer() {
           )
           .join("")}
       </div>
+      <button class="wide-button inline-action" type="button" data-archetype-chat="${encodeURIComponent(active.row_key)}">Ask OptAgent about this archetype</button>
     </div>
   `;
   container.querySelectorAll("[data-archetype-key]").forEach((button) => {
     button.addEventListener("click", () => {
       state.activeArchetypeKey = decodeURIComponent(button.dataset.archetypeKey);
       renderArchetypeExplorer();
+      const next = ordered.find((row) => row.row_key === state.activeArchetypeKey) || ordered[0];
+      const nextStrategies = matrix
+        .filter((row) => row.row_key === next.row_key)
+        .sort((a, b) => Number(a.rank || 999) - Number(b.rank || 999));
+      renderAgentTrace(archetypeAgentTrace(next, nextStrategies));
+    });
+  });
+  container.querySelectorAll("[data-archetype-chat]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const key = decodeURIComponent(button.dataset.archetypeChat);
+      const row = ordered.find((item) => item.row_key === key) || active;
+      const activeStrategies = matrix
+        .filter((item) => item.row_key === row.row_key)
+        .sort((a, b) => Number(a.rank || 999) - Number(b.rank || 999));
+      const message = `Explain the recommended retrofit ranking for ${row.fine_function_en || row.refined_function_label || row.row_key}`;
+      openAgentModal();
+      addChatMessage("user", message);
+      addChatMessage(
+        "assistant",
+        `${row.fine_function_en || row.refined_function_label || row.row_key}: the leading candidate is ${
+          activeStrategies[0] ? strategyLabel(activeStrategies[0].strategy_id) : "not loaded"
+        }, and the selected portfolio links ${formatNumber(row.selected_buildings, 0)} buildings with ${formatNumber(row.selected_annual_carbon_tco2, 0)} tCO2/yr.`
+      );
+      renderAgentTrace(archetypeAgentTrace(row, activeStrategies));
     });
   });
 }
@@ -4352,6 +5050,10 @@ function updateBuildingStatus() {
 
 function fitAllocation() {
   if (!state.map || !state.data) return;
+  if (regionFeatures().length && !allRegionsSelected() && selectedRegionCount()) {
+    focusRegionIds(Array.from(state.selectedRegionIds), 11.8);
+    return;
+  }
   const bounds = featureCollectionBounds(state.data.opportunityGeojson || state.data.allocationGeojson);
   if (bounds) state.map.fitBounds(bounds, { padding: 48, duration: 700 });
 }
@@ -4738,6 +5440,31 @@ async function callRemoteModel(message, apiKey, endpoint, model) {
     : "The model returned no readable answer.";
 }
 
+function activeRegionSummary() {
+  const total = regionFeatures().length;
+  if (!total) return null;
+  const majorIds = selectedMajorRegionIds();
+  const localNames = regionFeatures()
+    .filter((feature) => state.selectedRegionIds.has(regionId(feature)))
+    .slice(0, 12)
+    .map(regionName);
+  const opportunityIds = selectedGridIdsForKind("opportunity");
+  const microIds = selectedGridIdsForKind("microclimate");
+  const energyIds = selectedGridIdsForKind("energy");
+  return {
+    mode: allRegionsSelected() ? "citywide" : selectedRegionCount() ? "filtered" : "empty",
+    selectedLocalRegionCount: selectedRegionCount(),
+    totalLocalRegionCount: total,
+    selectedMajorRegionCount: majorIds.length,
+    selectedMajorRegions: allRegionsSelected() ? ["All Shanghai districts"] : majorIds.map(regionGroupName),
+    selectedLocalRegionsPreview: allRegionsSelected() ? ["All local regions"] : localNames,
+    opportunityGridCount: opportunityIds === null ? state.data?.opportunityGeojson?.features?.length || null : opportunityIds.length,
+    microclimateGridCount:
+      microIds === null ? state.microclimate?.microclimateGeojson?.features?.length || null : microIds.length,
+    energyGridCount: energyIds === null ? state.energy?.energyGridGeojson?.features?.length || null : energyIds.length
+  };
+}
+
 function buildContextPrompt() {
   const metrics = state.data.coreMetrics;
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
@@ -4759,6 +5486,7 @@ function buildContextPrompt() {
       selectedMicroclimateGrid: microclimate,
       selectedEnergyGrid: energyGrid,
       selectedBuildingEnergy: buildingEnergy,
+      activeRegionFilter: activeRegionSummary(),
       activeMicroclimateView: state.microclimate
         ? {
             season: state.activeMicroSeason,
@@ -4815,6 +5543,7 @@ function localAgentAnswer(message) {
   const asksEnergy = hasAny(text, raw, ["energy", "tmy", "eui", "\u80fd\u8017", "\u80fd\u6e90"]);
   const asksBudget = hasAny(text, raw, ["budget", "\u9884\u7b97"]);
   const asksBenchmark = hasAny(text, raw, ["model", "benchmark", "\u6a21\u578b", "\u6d4b\u8bc4"]);
+  const asksRegion = hasAny(text, raw, ["region", "district", "area", "administrative", "filter", "\u5206\u533a", "\u884c\u653f\u533a"]);
 
   if (clean.length <= 2 || ["hi", "hello", "hey", "\u4f60\u597d"].includes(clean.toLowerCase())) {
     return "I am here. Ask me naturally about the platform, paper, WRF microclimate evidence, building energy response, retrofit optimization, or the currently selected map object.";
@@ -4822,6 +5551,14 @@ function localAgentAnswer(message) {
 
   if (false) {
     return "我在。你可以像和 GPT 聊天一样直接问我平台、论文、WRF 微气候、建筑能耗或某个点击对象的问题；如果你点中了建筑或网格，我会自动把它作为上下文。";
+  }
+
+  if (asksRegion) {
+    const region = activeRegionSummary();
+    if (!region) return "Administrative-region data are not loaded yet.";
+    return region.mode === "citywide"
+      ? `The region filter is citywide: ${formatNumber(region.totalLocalRegionCount, 0)} local regions across ${formatNumber(majorRegionFeatures().length, 0)} Shanghai districts are active. The current evidence scope contains ${formatNumber(region.opportunityGridCount, 0)} optimization/energy grids and ${formatNumber(region.microclimateGridCount, 0)} WRF microclimate grids.`
+      : `The active region filter covers ${formatNumber(region.selectedLocalRegionCount, 0)} local regions in ${region.selectedMajorRegions.join(", ")}. It keeps ${formatNumber(region.opportunityGridCount, 0)} optimization/energy grids and ${formatNumber(region.microclimateGridCount, 0)} WRF microclimate grids in the current evidence scope.`;
   }
 
   if (asksEnergy && state.selectedEnergyGrid) {
