@@ -13,12 +13,13 @@
         <div class="rail-brand">
           <span class="mark" aria-hidden="true">
             <svg viewBox="0 0 48 48" role="img">
-              <path d="M18 8h12v6h-3v4h-6v-4h-3V8Z" />
-              <rect x="10" y="17" width="28" height="25" rx="7" />
-              <circle cx="19" cy="29" r="3" />
-              <circle cx="29" cy="29" r="3" />
-              <path d="M18 36h12" />
-              <path d="M6 26h4M38 26h4" />
+              <path class="mark-shell" d="M24 4 39 12.5v17L24 44 9 29.5v-17L24 4Z" />
+              <path d="M16 31h16M18 31v-8h5v8M25 31V18h5v13" />
+              <path d="M15 17 24 12l9 5M24 12v8" />
+              <circle cx="15" cy="17" r="2.2" />
+              <circle cx="33" cy="17" r="2.2" />
+              <circle cx="24" cy="12" r="2.2" />
+              <circle cx="24" cy="20" r="2.2" />
             </svg>
           </span>
           <span class="rail-title">OptAgent</span>
@@ -49,31 +50,15 @@
         <header class="product-header">
           <p class="eyebrow">Shanghai urban retrofit decision support</p>
           <h1>Agentic microclimate-aware decarbonization</h1>
-          <p class="subhead">
-            Explore NSGA-II retrofit allocation, semantic decision units, RAG constraints, and critic-agent audit traces from the Shanghai case study.
-          </p>
         </header>
 
         <div class="panel-section active" id="panel-overview">
-          <div class="metric-grid" id="metricGrid"></div>
-          <div class="control-block">
-            <label for="scenarioSelect">Model comparison</label>
-            <select id="scenarioSelect"></select>
-            <p class="summary-text">
-              Ablation and model variants (old vs refined semantics, TMY vs microclimate, energy-only, deep-retrofit),
-              not independent policy scenarios. Proposed run: <strong>S3 refined-microclimate agentic</strong>.
-            </p>
-          </div>
-          <div class="control-block">
-            <div class="section-title">Selected comparison</div>
-            <div id="scenarioNarrative" class="narrative"></div>
-          </div>
           <div class="control-block region-filter-block">
             <span class="control-label">Region filter</span>
             <details class="region-filter-dropdown">
               <summary>
                 <span data-region-filter-summary>Loading regions...</span>
-                <span class="chevron" aria-hidden="true">⌄</span>
+                <span class="chevron" aria-hidden="true">v</span>
               </summary>
               <div class="region-filter-menu">
                 <div class="region-filter-actions">
@@ -83,6 +68,16 @@
                 <div class="region-filter-list" data-region-filter-list></div>
               </div>
             </details>
+          </div>
+          <div class="metric-grid" id="metricGrid"></div>
+          <div class="control-block">
+            <label for="scenarioSelect">Model comparison</label>
+            <select id="scenarioSelect"></select>
+            <p id="scenarioLinkage" class="summary-text"></p>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Selected comparison</div>
+            <div id="scenarioNarrative" class="narrative"></div>
           </div>
         </div>
 
@@ -103,7 +98,7 @@
             <details class="region-filter-dropdown">
               <summary>
                 <span data-region-filter-summary>Loading regions...</span>
-                <span class="chevron" aria-hidden="true">⌄</span>
+                <span class="chevron" aria-hidden="true">v</span>
               </summary>
               <div class="region-filter-menu">
                 <div class="region-filter-actions">
@@ -163,7 +158,7 @@
             <details class="region-filter-dropdown">
               <summary>
                 <span data-region-filter-summary>Loading regions...</span>
-                <span class="chevron" aria-hidden="true">⌄</span>
+                <span class="chevron" aria-hidden="true">v</span>
               </summary>
               <div class="region-filter-menu">
                 <div class="region-filter-actions">
@@ -230,7 +225,7 @@
             <details class="region-filter-dropdown">
               <summary>
                 <span data-region-filter-summary>Loading regions...</span>
-                <span class="chevron" aria-hidden="true">⌄</span>
+                <span class="chevron" aria-hidden="true">v</span>
               </summary>
               <div class="region-filter-menu">
                 <div class="region-filter-actions">
@@ -264,22 +259,20 @@
         </div>
 
         <div class="panel-section" id="panel-evidence">
-          <div class="control-block">
-            <p class="summary-text">
-              Quantitative evidence behind the Shanghai retrofit allocation. OptAgent only orchestrates and explains
-              these results &mdash; the energy and carbon numbers come from the UBEM + NSGA-II/MILP + EnergyPlus pipeline.
-            </p>
-          </div>
           <div class="control-block agent-workbench">
             <div class="section-title">Agent decision pipeline</div>
             <div id="agentCompactStatus" class="agent-compact-status"></div>
             <div id="agentCards" class="agent-card-grid"></div>
             <div id="agentRunState" class="agent-run-state"></div>
             <div id="agentTrace" class="agent-trace"></div>
-            <div class="section-title">Evidence lineage</div>
-            <div id="agentEvidence" class="agent-evidence-lineage"></div>
-            <div class="section-title">Critic guardrails</div>
-            <div id="agentGuardrails" class="agent-guardrails"></div>
+          </div>
+          <div class="control-block benchmark-spotlight-block">
+            <div class="section-title">Interactive 10-model benchmark</div>
+            <button id="benchmarkSpotlight" class="benchmark-spotlight" type="button">
+              <img src="./assets/figures/fig13_agent_model_benchmark.png" alt="10-model OptAgent benchmark" />
+              <span>Open benchmark cards</span>
+            </button>
+            <div id="benchmarkExplorer" class="benchmark-explorer"></div>
           </div>
           <div class="control-block">
             <div class="section-title">Selected map evidence</div>
@@ -288,41 +281,10 @@
           <div class="control-block">
             <div class="section-title">Building-type retrofit ranking</div>
             <div id="archetypeExplorer" class="archetype-explorer"></div>
-            <figure class="evidence-figure">
-              <img src="./assets/figures/fig15_archetype_strategy_rank_heatmap.png" alt="Archetype-level strategy priority heatmap" />
-            </figure>
-          </div>
-          <div class="control-block">
-            <div class="section-title">Semantic re-mapping flow</div>
-            <div id="semanticSankey" class="sankey-chart"></div>
           </div>
           <div class="control-block">
             <div class="section-title">NSGA-II Pareto front</div>
             <div id="paretoExplorer" class="pareto-explorer"></div>
-          </div>
-          <div class="control-block">
-            <div class="section-title">Interactive 10-model benchmark</div>
-            <div id="benchmarkExplorer" class="benchmark-explorer"></div>
-          </div>
-          <div class="control-block">
-            <div class="section-title">Policy cost and equity evidence</div>
-            <div id="policyExplorer" class="policy-explorer"></div>
-            <figure class="evidence-figure">
-              <img src="./assets/figures/fig12_policy_translation_macc_equity.png" alt="Policy translation, MACC and spatial equity evidence" />
-            </figure>
-          </div>
-          <div class="control-block">
-            <div class="section-title">Budget sensitivity</div>
-            <div id="budgetChart" class="bar-chart"></div>
-          </div>
-          <div class="control-block">
-            <div class="section-title">Full-year energy &amp; carbon</div>
-            <div id="fullYearCurves" class="evidence-chart"></div>
-            <div id="fullYearValidation" class="validation-explorer"></div>
-          </div>
-          <div class="control-block">
-            <div class="section-title">Independence &amp; strategy drivers</div>
-            <div id="independenceExplorer" class="independence-explorer"></div>
           </div>
         </div>
       </section>
@@ -344,6 +306,7 @@
           <button id="askAgentButton" type="button" class="primary-tool">Ask OptAgent</button>
           <span id="buildingStatus" class="building-status">3D buildings loading</span>
         </div>
+        <div id="agentOrbit" class="agent-orbit hidden" aria-label="Selected-building agent controls"></div>
       </section>
 
       <aside class="inspector" aria-label="Selected grid analysis">

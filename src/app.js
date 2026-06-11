@@ -305,7 +305,8 @@ const state = {
   regions: null,
   selectedRegionIds: new Set(),
   regionGridFilterCache: new Map(),
-  regionFilterInitialized: false
+  regionFilterInitialized: false,
+  agentOrbitLngLat: null
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -846,8 +847,21 @@ function focusRegionIds(ids, maxZoom = 13.8) {
   const bounds = regionBoundsForIds(ids);
   if (!bounds) return;
   const center = [(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2];
-  if (ids.length === 1) {
-    state.map.easeTo({ center, zoom: maxZoom, pitch: 45, duration: 850, essential: true });
+  const buildingZoom = Math.max(maxZoom, buildingMinZoom() + 0.35);
+  if (buildingZoom >= buildingMinZoom()) {
+    state.mapFocusMode = "buildings";
+    syncMapLayerVisibility();
+  }
+  if (ids.length === 1 || buildingZoom >= buildingMinZoom() + 0.25) {
+    state.map.easeTo({
+      center,
+      zoom: buildingZoom,
+      pitch: 60,
+      bearing: -18,
+      duration: 850,
+      essential: true
+    });
+    state.map.once("moveend", updateAgentOrbitPosition);
     return;
   }
   const compact = window.innerWidth < 900;
@@ -862,6 +876,7 @@ function focusRegionIds(ids, maxZoom = 13.8) {
     duration: 850,
     essential: true
   });
+  state.map.once("moveend", updateAgentOrbitPosition);
 }
 
 function syncRegionLayers() {
@@ -953,6 +968,10 @@ function initMap() {
   state.map.on("idle", updateBuildingStatus);
   state.map.on("moveend", updateBuildingStatus);
   state.map.on("zoomend", updateBuildingStatus);
+  state.map.on("move", updateAgentOrbitPosition);
+  state.map.on("zoom", updateAgentOrbitPosition);
+  state.map.on("moveend", updateAgentOrbitPosition);
+  state.map.on("zoomend", updateAgentOrbitPosition);
   state.map.on("idle", () => scheduleVisibleBuildingEnergyHydration(80));
   state.map.on("moveend", () => scheduleVisibleBuildingEnergyHydration(120));
   state.map.on("zoomend", () => scheduleVisibleBuildingEnergyHydration(120));
@@ -1301,7 +1320,7 @@ function addMapSourcesAndLayers() {
       clearRegionFilterCache();
       syncRegionCheckboxes();
       applyRegionFilter();
-      focusRegionIds(ids, 11.8);
+      focusRegionIds(ids, 14.65);
     });
     map.on("mouseenter", "region-major-line", () => {
       map.getCanvas().style.cursor = "pointer";
@@ -1321,7 +1340,7 @@ function addMapSourcesAndLayers() {
       clearRegionFilterCache();
       syncRegionCheckboxes();
       applyRegionFilter();
-      focusRegionIds([id], 13.7);
+      focusRegionIds([id], 15.2);
     });
     map.on("mouseenter", layer, () => {
       map.getCanvas().style.cursor = "pointer";
@@ -2006,28 +2025,65 @@ function findCurrentAllocationFeature(gridId) {
 }
 
 function updateAllocationForScenario() {
+  const previousBuilding = state.selectedBuilding;
+  const previousOpportunity = state.selectedOpportunity;
+  const previousGridId = Number(
+    previousBuilding?.properties?.grid_id ??
+      state.selectedFeature?.properties?.grid_id ??
+      previousOpportunity?.properties?.grid_id
+  );
   const next = currentAllocationGeojson();
   state.data.allocationGeojson = next;
-  state.selectedFeature = null;
-  state.selectedOpportunity = null;
-  state.selectedBuilding = null;
+  const selectedGrid = Number.isFinite(previousGridId)
+    ? next.features.find((item) => Number(item.properties.grid_id) === previousGridId) || null
+    : null;
+  const opportunityGrid = Number.isFinite(previousGridId)
+    ? state.data.opportunityGeojson.features.find((item) => Number(item.properties.grid_id) === previousGridId) || null
+    : null;
+  state.selectedFeature = selectedGrid;
+  state.selectedOpportunity = previousBuilding ? null : selectedGrid ? null : opportunityGrid || previousOpportunity || null;
+  state.selectedBuilding = previousBuilding || null;
   state.selectedMicroclimate = null;
   state.selectedEnergyGrid = null;
   if (state.map && state.map.getSource("allocation")) {
     state.map.getSource("allocation").setData(next);
   }
   if (state.map && state.map.getLayer("allocation-selected-line")) {
-    state.map.setFilter("allocation-selected-line", ["==", ["get", "grid_id"], -1]);
+    state.map.setFilter(
+      "allocation-selected-line",
+      selectedGrid
+        ? [
+            "all",
+            ["==", ["get", "grid_id"], selectedGrid.properties.grid_id],
+            ["==", ["get", "strategy_id"], selectedGrid.properties.strategy_id]
+          ]
+        : ["==", ["get", "grid_id"], Number.isFinite(previousGridId) ? previousGridId : -1]
+    );
   }
   if (state.map && state.map.getLayer("opportunity-selected-line")) {
-    state.map.setFilter("opportunity-selected-line", ["==", ["get", "grid_id"], -1]);
+    state.map.setFilter("opportunity-selected-line", ["==", ["get", "grid_id"], selectedGrid ? -1 : Number.isFinite(previousGridId) ? previousGridId : -1]);
   }
   renderStrategyFilter();
   renderScenarioNarrative();
+  renderScenarioLinkage();
   renderLegend();
-  renderEmptySelection();
+  if (previousBuilding) {
+    renderSelectedBuilding();
+    renderAgentOrbit();
+  } else if (selectedGrid) {
+    renderSelected();
+    hideAgentOrbit();
+  } else if (state.selectedOpportunity) {
+    renderSelectedOpportunity();
+    hideAgentOrbit();
+  } else {
+    renderEmptySelection();
+    hideAgentOrbit();
+  }
+  renderEvidenceSelection();
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Switch to ${scenarioLabel(state.scenarioId)}.`));
+  state.mapFocusMode = previousBuilding ? "buildings" : "default";
   applyMapFilters();
   syncEnergyLayer();
 }
@@ -2071,7 +2127,9 @@ function wirePanels() {
       button.classList.add("active");
       document.querySelectorAll(".panel-section").forEach((panel) => panel.classList.remove("active"));
       document.getElementById(`panel-${state.activePanel}`).classList.add("active");
-      if (state.activePanel !== "energy" || state.activeEnergyMode !== "building") {
+      if (state.selectedBuilding) {
+        state.mapFocusMode = "buildings";
+      } else if (state.activePanel !== "energy" || state.activeEnergyMode !== "building") {
         state.mapFocusMode = "default";
       }
       if (state.activePanel === "energy") {
@@ -2145,7 +2203,7 @@ function wireRegionFilterControls() {
         clearRegionFilterCache();
         syncRegionCheckboxes();
         applyRegionFilter();
-        if (input.checked) focusRegionIds(ids, 11.8);
+        if (input.checked) focusRegionIds(ids, 14.65);
         return;
       }
       const id = input.dataset.regionId || input.value;
@@ -2154,7 +2212,7 @@ function wireRegionFilterControls() {
       clearRegionFilterCache();
       syncRegionCheckboxes();
       applyRegionFilter();
-      if (input.checked) focusRegionIds([id], 13.7);
+      if (input.checked) focusRegionIds([id], 15.2);
     });
   });
   document.querySelectorAll("[data-region-select-all]").forEach((button) => {
@@ -2318,6 +2376,7 @@ function renderOverview() {
 
   renderStrategyFilter();
   renderScenarioNarrative();
+  renderScenarioLinkage();
   renderOptimizationBudgetSummary();
 }
 
@@ -2377,11 +2436,21 @@ function renderScenarioNarrative() {
     .join(", ");
 
   document.getElementById("scenarioNarrative").innerHTML = `
-    <p><strong>${scenarioLabel(row.scenario_id)}</strong> is a model comparison view, not a separate policy scenario. ${meta.note || ""}</p>
-    <p>It selects ${formatNumber(row.selected_units)} units and ${formatNumber(row.selected_buildings)} buildings under a ${formatCurrency(row.budget_rmb)} budget.</p>
-    <p>Annual carbon reduction is ${formatNumber(row.annual_carbon_reduction_tco2__cluster_weighted_13_14_25, 1)} tCO2/yr, with the largest strategy budget share constrained to ${formatNumber(row.largest_strategy_budget_share_pct, 1)}%.</p>
-    <p>Dominant strategies: ${top || "not available"}. The full opportunity layer covers ${formatNumber((state.data.opportunityGeojson || { features: [] }).features.length)} building-stock/candidate grids; this scenario selects ${formatNumber(state.data.allocationGeojson.features.length)} budget-constrained grids.</p>
+    <p><strong>${scenarioLabel(row.scenario_id)}</strong>: ${meta.note || "Model-ablation comparison for the current portfolio."}</p>
+    <p>${formatNumber(row.selected_buildings)} buildings, ${formatCurrency(row.budget_rmb)} budget, ${formatNumber(row.annual_carbon_reduction_tco2__cluster_weighted_13_14_25, 1)} tCO2/yr. Dominant strategies: ${top || "not available"}.</p>
   `;
+}
+
+function renderScenarioLinkage() {
+  const node = document.getElementById("scenarioLinkage");
+  if (!node || !state.data) return;
+  const row = state.data.scenarioSummary.find((item) => item.scenario_id === state.scenarioId);
+  const selected = state.selectedBuilding
+    ? `Selected building ${mergedBuildingProperties(state.selectedBuilding.properties).bldg_id || ""} stays pinned while its grid is re-checked in the active model.`
+    : state.selectedFeature
+      ? `Selected grid ${state.selectedFeature.properties.grid_id} is re-colored and re-audited in the active model.`
+      : "The map overlay, critic trace, and benchmark evidence update together.";
+  node.textContent = `${row ? "Model-ablation view." : "Model comparison."} ${selected}`;
 }
 
 function wireMicroclimateControls() {
@@ -2581,7 +2650,7 @@ function renderMicroEnergyEvidence() {
       (row) => `
         <div class="micro-row">
           <span class="micro-row-top"><strong>${escapeHtml(row.category)}</strong><em>${formatNumber(row.diff, 1)}%</em></span>
-          <span>TMY ${formatNumber(row.tmy, 1)} Wh/m2 | WRF ${formatNumber(row.wrf, 1)} Wh/m2 | ΔT ${formatNumber(row.deltaT, 2)} C</span>
+          <span>TMY ${formatNumber(row.tmy, 1)} Wh/m2 | WRF ${formatNumber(row.wrf, 1)} Wh/m2 | Delta T ${formatNumber(row.deltaT, 2)} C</span>
         </div>
       `
     )
@@ -3017,13 +3086,7 @@ function renderEvidence() {
   renderEvidenceSelection();
   renderModelBenchmark();
   renderArchetypeExplorer();
-  safeRender(renderSemanticSankey);
   safeRender(renderParetoExplorerInteractive);
-  renderPolicyExplorer();
-  renderBudgetChart();
-  safeRender(renderFullYearCurves);
-  safeRender(renderFullYearValidation);
-  safeRender(renderIndependenceExplorer);
 }
 
 function renderEvidenceSelection() {
@@ -3527,6 +3590,94 @@ function renderAgentWorkbench() {
       renderAgentTrace(buildAgentTrace(`Focus ${AGENTS[state.activeAgent].label}.`));
     });
   });
+  updateAgentOrbitState();
+}
+
+function updateAgentOrbitState() {
+  const node = document.getElementById("agentOrbit");
+  if (!node || node.classList.contains("hidden") || !state.selectedBuilding) return;
+  node.querySelectorAll("[data-agent-orbit]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.agentOrbit === state.activeAgent);
+  });
+}
+
+function renderAgentOrbit(lngLat = null) {
+  const node = document.getElementById("agentOrbit");
+  if (!node || !state.map || !state.selectedBuilding) {
+    hideAgentOrbit();
+    return;
+  }
+  const p = mergedBuildingProperties(state.selectedBuilding.properties);
+  const anchor =
+    normalizeLngLat(lngLat) ||
+    normalizeLngLat([Number(p.center_lon), Number(p.center_lat)]) ||
+    normalizeLngLat(featureCenter(state.selectedBuilding));
+  if (!anchor) {
+    hideAgentOrbit();
+    return;
+  }
+  state.agentOrbitLngLat = anchor;
+  const badges = { data: "D", knowledge: "K", scenario: "S", optimization: "O", critic: "C" };
+  const entries = Object.entries(AGENTS);
+  node.innerHTML = `
+    <button class="agent-orbit-core" type="button" title="Open OptAgent chat">AI</button>
+    ${entries
+      .map(([key, agent], index) => {
+        const angle = (-90 + index * (360 / entries.length)) * (Math.PI / 180);
+        const x = Math.cos(angle) * 72;
+        const y = Math.sin(angle) * 72;
+        return `
+          <button class="agent-orbit-button ${state.activeAgent === key ? "active" : ""}" type="button" data-agent-orbit="${key}" title="${escapeHtml(agent.label)}: ${escapeHtml(agent.role)}" style="--agent-color:${agent.color};--x:${x.toFixed(1)}px;--y:${y.toFixed(1)}px">
+            <span>${badges[key] || agent.short.slice(0, 1)}</span>
+          </button>
+        `;
+      })
+      .join("")}
+  `;
+  node.querySelector(".agent-orbit-core")?.addEventListener("click", openAgentModal);
+  node.querySelectorAll("[data-agent-orbit]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeAgent = button.dataset.agentOrbit;
+      renderAgentWorkbench();
+      renderAgentTrace(buildAgentTrace(`Focus ${AGENTS[state.activeAgent].label} for building ${p.bldg_id || "selection"}.`));
+    });
+  });
+  updateAgentOrbitPosition();
+}
+
+function normalizeLngLat(value) {
+  if (!value) return null;
+  if (Array.isArray(value) && value.length >= 2) {
+    const lng = Number(value[0]);
+    const lat = Number(value[1]);
+    return Number.isFinite(lng) && Number.isFinite(lat) ? [lng, lat] : null;
+  }
+  const lng = Number(value.lng ?? value.lon ?? value.longitude);
+  const lat = Number(value.lat ?? value.latitude);
+  return Number.isFinite(lng) && Number.isFinite(lat) ? [lng, lat] : null;
+}
+
+function updateAgentOrbitPosition() {
+  const node = document.getElementById("agentOrbit");
+  if (!node || !state.map || !state.selectedBuilding || !state.agentOrbitLngLat) return;
+  const point = state.map.project(state.agentOrbitLngLat);
+  const canvas = state.map.getCanvas();
+  const visible =
+    point.x > -110 &&
+    point.y > -110 &&
+    point.x < canvas.clientWidth + 110 &&
+    point.y < canvas.clientHeight + 110 &&
+    state.map.getZoom() >= buildingMinZoom();
+  node.style.transform = `translate(${point.x.toFixed(1)}px, ${point.y.toFixed(1)}px)`;
+  node.classList.toggle("hidden", !visible);
+}
+
+function hideAgentOrbit() {
+  state.agentOrbitLngLat = null;
+  const node = document.getElementById("agentOrbit");
+  if (!node) return;
+  node.classList.add("hidden");
+  node.innerHTML = "";
 }
 
 function agentStatus(key, selected, building) {
@@ -3666,7 +3817,7 @@ function renderAgentRunState(steps) {
   const compact = document.getElementById("agentCompactStatus");
   const evidence = document.getElementById("agentEvidence");
   const guardrails = document.getElementById("agentGuardrails");
-  if (!runState || !evidence || !guardrails) return;
+  if (!runState) return;
 
   const selected = state.selectedFeature ? state.selectedFeature.properties : null;
   const opportunity = state.selectedOpportunity ? state.selectedOpportunity.properties : null;
@@ -3713,27 +3864,31 @@ function renderAgentRunState(steps) {
     .join("");
 
   const evidenceRows = buildEvidenceRows(prompt, gridContext, building, scenario);
-  evidence.innerHTML = evidenceRows
-    .map(
-      (row) => `
-        <div class="lineage-item ${row.kind || ""}">
-          <span>${row.label}</span>
-          <strong>${row.value}</strong>
-        </div>
-      `
-    )
-    .join("");
+  if (evidence) {
+    evidence.innerHTML = evidenceRows
+      .map(
+        (row) => `
+          <div class="lineage-item ${row.kind || ""}">
+            <span>${row.label}</span>
+            <strong>${row.value}</strong>
+          </div>
+        `
+      )
+      .join("");
+  }
 
-  guardrails.innerHTML = guardrailRows
-    .map(
-      (row) => `
-        <div class="guardrail-item ${row.kind}">
-          <span>${row.label}</span>
-          <strong>${row.value}</strong>
-        </div>
-      `
-    )
-    .join("");
+  if (guardrails) {
+    guardrails.innerHTML = guardrailRows
+      .map(
+        (row) => `
+          <div class="guardrail-item ${row.kind}">
+            <span>${row.label}</span>
+            <strong>${row.value}</strong>
+          </div>
+        `
+      )
+      .join("");
+  }
 }
 
 function runTargetLabel(selected, building) {
@@ -4041,6 +4196,15 @@ function renderModelBenchmark() {
       renderAgentTrace(benchmarkAgentTrace(spec));
     });
   });
+  const spotlight = document.getElementById("benchmarkSpotlight");
+  if (spotlight) {
+    spotlight.onclick = () => {
+      state.activeBenchmarkModel = overall[0].model_spec;
+      renderModelBenchmark();
+      renderAgentTrace(benchmarkAgentTrace(state.activeBenchmarkModel));
+      container.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    };
+  }
 }
 
 function renderArchetypeExplorer() {
@@ -4360,6 +4524,7 @@ function selectFeature(feature, lngLat) {
 
   renderSelected();
   renderEvidenceSelection();
+  renderScenarioLinkage();
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Inspect selected grid ${p.grid_id}.`));
   highlightAgentHotspots("selected");
@@ -4407,6 +4572,7 @@ function selectOpportunityFeature(feature, lngLat) {
 
   renderSelectedOpportunity();
   renderEvidenceSelection();
+  renderScenarioLinkage();
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Inspect full-city opportunity grid ${p.grid_id}.`));
   highlightAgentHotspots("selected");
@@ -4459,8 +4625,12 @@ function selectBuildingFeature(feature, lngLat) {
   hydrateSelectedBuildingEnergy(p.bldg_id);
   hydrateSelectedBuildingSemantic(p.bldg_id);
   renderEvidenceSelection();
+  renderScenarioLinkage();
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Inspect selected building ${p.bldg_id}.`));
+  state.mapFocusMode = "buildings";
+  syncMapLayerVisibility();
+  renderAgentOrbit(lngLat);
   highlightAgentHotspots("selected");
 }
 
@@ -4507,6 +4677,7 @@ function selectMicroclimateFeature(feature, lngLat) {
 
   renderSelectedMicroclimate();
   renderEvidenceSelection();
+  renderScenarioLinkage();
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Inspect microclimate grid ${p.grid_id}.`));
 }
@@ -4554,6 +4725,7 @@ function selectEnergyGridFeature(feature, lngLat) {
   renderSelectedEnergyGrid();
   renderEnergyPanel();
   renderEvidenceSelection();
+  renderScenarioLinkage();
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Inspect energy grid ${p.grid_id}.`));
 }
@@ -4562,6 +4734,7 @@ function clearBuildingSelection() {
   if (state.map && state.map.getLayer("building-selected-line")) {
     state.map.setFilter("building-selected-line", emptyBuildingSelectionFilter());
   }
+  hideAgentOrbit();
 }
 
 function buildingSelectionFilter(bldgId) {
@@ -4605,6 +4778,7 @@ function renderEmptySelection() {
   `;
   document.getElementById("agentSteps").innerHTML = "";
   document.getElementById("unitExamples").innerHTML = "";
+  hideAgentOrbit();
   renderEvidenceSelection();
   renderMapLegend();
 }
@@ -5051,7 +5225,7 @@ function updateBuildingStatus() {
 function fitAllocation() {
   if (!state.map || !state.data) return;
   if (regionFeatures().length && !allRegionsSelected() && selectedRegionCount()) {
-    focusRegionIds(Array.from(state.selectedRegionIds), 11.8);
+    focusRegionIds(Array.from(state.selectedRegionIds), 14.65);
     return;
   }
   const bounds = featureCollectionBounds(state.data.opportunityGeojson || state.data.allocationGeojson);
@@ -5061,7 +5235,7 @@ function fitAllocation() {
 function zoomSelected() {
   const feature = state.selectedFeature || state.selectedOpportunity || state.selectedEnergyGrid || state.selectedMicroclimate;
   if (state.selectedBuilding) {
-    focus3DBuildings();
+    zoomToSelectedBuilding();
     return;
   }
   if (!feature) {
@@ -5075,6 +5249,40 @@ function zoomToFeature(feature) {
   if (!state.map) return;
   const bounds = featureBounds(feature);
   if (bounds) state.map.fitBounds(bounds, { padding: 90, duration: 700, maxZoom: 14.5, pitch: 58, bearing: -18 });
+}
+
+function zoomToSelectedBuilding() {
+  if (!state.map || !state.selectedBuilding) return;
+  state.mapFocusMode = "buildings";
+  syncMapLayerVisibility();
+  const p = mergedBuildingProperties(state.selectedBuilding.properties);
+  const center =
+    normalizeLngLat([Number(p.center_lon), Number(p.center_lat)]) ||
+    normalizeLngLat(featureCenter(state.selectedBuilding)) ||
+    defaultMapCenter();
+  const bounds = featureBounds(state.selectedBuilding);
+  if (bounds) {
+    const compact = window.innerWidth < 1100;
+    state.map.fitBounds(bounds, {
+      padding: compact
+        ? 90
+        : { top: 160, bottom: 150, left: 160, right: Math.min(430, Math.round(window.innerWidth * 0.24)) },
+      duration: 700,
+      maxZoom: 17.6,
+      pitch: 62,
+      bearing: -20
+    });
+  } else {
+    state.map.easeTo({
+      center,
+      zoom: Math.max(state.map.getZoom(), 16.6),
+      pitch: 62,
+      bearing: -20,
+      duration: 700
+    });
+  }
+  state.agentOrbitLngLat = center;
+  state.map.once("moveend", () => renderAgentOrbit(center));
 }
 
 function featureCenter(feature) {
@@ -5547,10 +5755,6 @@ function localAgentAnswer(message) {
 
   if (clean.length <= 2 || ["hi", "hello", "hey", "\u4f60\u597d"].includes(clean.toLowerCase())) {
     return "I am here. Ask me naturally about the platform, paper, WRF microclimate evidence, building energy response, retrofit optimization, or the currently selected map object.";
-  }
-
-  if (false) {
-    return "我在。你可以像和 GPT 聊天一样直接问我平台、论文、WRF 微气候、建筑能耗或某个点击对象的问题；如果你点中了建筑或网格，我会自动把它作为上下文。";
   }
 
   if (asksRegion) {

@@ -114,8 +114,14 @@ select:focus {
   width: 42px;
   height: 42px;
   border-radius: 8px;
-  background: #f5f7f2;
-  color: #203039;
+  border: 1px solid rgba(90, 209, 230, 0.32);
+  background:
+    linear-gradient(135deg, rgba(90, 209, 230, 0.98), rgba(22, 122, 117, 0.88)),
+    #f5f7f2;
+  color: #ffffff;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.16) inset,
+    0 10px 24px rgba(0, 0, 0, 0.22);
 }
 
 .mark svg {
@@ -123,9 +129,13 @@ select:focus {
   height: 32px;
   fill: none;
   stroke: currentColor;
-  stroke-width: 3;
+  stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.mark .mark-shell {
+  fill: rgba(255, 255, 255, 0.08);
 }
 
 .rail-title {
@@ -829,6 +839,64 @@ h2 {
   box-shadow: var(--shadow);
 }
 
+.agent-orbit {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  transition: opacity 0.16s ease;
+}
+
+.agent-orbit.hidden {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.agent-orbit-core,
+.agent-orbit-button {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  pointer-events: auto;
+  box-shadow: 0 10px 26px rgba(17, 30, 35, 0.2);
+}
+
+.agent-orbit-core {
+  width: 46px;
+  height: 46px;
+  transform: translate(-50%, -50%);
+  border-color: rgba(255, 255, 255, 0.72);
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0) 38%),
+    linear-gradient(135deg, #172126, var(--teal));
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.agent-orbit-button {
+  width: 42px;
+  height: 42px;
+  transform: translate(calc(-50% + var(--x)), calc(-50% + var(--y)));
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  background: var(--agent-color);
+  color: #ffffff;
+}
+
+.agent-orbit-button span {
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.agent-orbit-button.active {
+  outline: 3px solid rgba(255, 255, 255, 0.7);
+  transform: translate(calc(-50% + var(--x)), calc(-50% + var(--y))) scale(1.08);
+}
+
 .token-notice {
   position: absolute;
   inset: 0;
@@ -1034,6 +1102,46 @@ h2 {
   border-radius: 8px;
   background: #ffffff;
   overflow: hidden;
+}
+
+.benchmark-spotlight {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 0;
+  margin-bottom: 12px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(22, 122, 117, 0.24);
+  border-radius: 8px;
+  background: #ffffff;
+  text-align: left;
+  box-shadow: 0 12px 28px rgba(20, 31, 36, 0.08);
+}
+
+.benchmark-spotlight img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.benchmark-spotlight span {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  min-height: 28px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(23, 33, 38, 0.86);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.benchmark-spotlight:hover {
+  border-color: rgba(22, 122, 117, 0.58);
+  background: #ffffff;
+  transform: translateY(-1px);
 }
 
 .benchmark-explorer,
