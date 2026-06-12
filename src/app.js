@@ -92,6 +92,14 @@ const ENERGY_MODES = {
   combined: "Buildings + grid"
 };
 
+const PANEL_LABELS = {
+  overview: "Overview",
+  layers: "Agent optimization",
+  microclimate: "Microclimate",
+  energy: "Energy",
+  evidence: "Evidence"
+};
+
 const ENERGY_WEEKLY_RAMP = ["#fff7bc", "#fee391", "#fec44f", "#fe9929", "#d95f0e", "#8c2d04"];
 const ENERGY_DIFFERENCE_RAMP = ["#2166ac", "#67a9cf", "#f7f7f7", "#ef8a62", "#b2182b"];
 const BUILDING_HEIGHT_RAMP = [
@@ -331,6 +339,7 @@ async function init() {
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace("Initialize the Shanghai OptAgent workflow."));
   renderEmptySelection();
+  renderInteractionStatus();
   checkAgentBackendStatus();
   initMap();
 }
@@ -1322,7 +1331,7 @@ function addMapSourcesAndLayers() {
       clearRegionFilterCache();
       syncRegionCheckboxes();
       applyRegionFilter();
-      focusRegionIds(ids, 14.65);
+      focusRegionForCurrentPanel(ids, 14.65);
     });
     map.on("mouseenter", "region-major-line", () => {
       map.getCanvas().style.cursor = "pointer";
@@ -1342,7 +1351,7 @@ function addMapSourcesAndLayers() {
       clearRegionFilterCache();
       syncRegionCheckboxes();
       applyRegionFilter();
-      focusRegionIds([id], 15.2);
+      focusRegionForCurrentPanel([id], 15.2);
     });
     map.on("mouseenter", layer, () => {
       map.getCanvas().style.cursor = "pointer";
@@ -2119,6 +2128,149 @@ function applyRegionFilter() {
   renderRegionFilter();
   renderMapLegend();
   renderAgentTrace(buildAgentTrace("Apply administrative-region filter."));
+  refreshActiveSelectionViews("region");
+  renderInteractionStatus();
+}
+
+function panelLabel(panelId = state.activePanel) {
+  return PANEL_LABELS[panelId] || panelId || "View";
+}
+
+function activatePanel(panelId) {
+  const button = document.querySelector(`[data-panel-target="${panelId}"]`);
+  if (!button) return false;
+  button.click();
+  return true;
+}
+
+function setPanelMapFocus(panelId = state.activePanel) {
+  if (panelId === "microclimate") {
+    state.mapFocusMode = "default";
+    return;
+  }
+  if (panelId === "energy") {
+    state.mapFocusMode = ["building", "combined"].includes(state.activeEnergyMode) ? "buildings" : "default";
+    return;
+  }
+  if (panelId === "evidence" && state.selectedMicroclimate) {
+    state.mapFocusMode = "default";
+    return;
+  }
+  if (panelId === "evidence" && state.selectedEnergyGrid && state.activeEnergyMode === "grid") {
+    state.mapFocusMode = "default";
+    return;
+  }
+  state.mapFocusMode = state.selectedBuilding ? "buildings" : "default";
+}
+
+function fitRegionBounds(ids, maxZoom = 12.8, options = {}) {
+  if (!state.map || !ids.length) return;
+  const bounds = regionBoundsForIds(ids);
+  if (!bounds) return;
+  const compact = window.innerWidth < 900;
+  state.map.fitBounds(bounds, {
+    padding: {
+      top: options.top ?? 72,
+      bottom: options.bottom ?? 80,
+      left: compact ? 34 : Math.min(420, Math.round(window.innerWidth * 0.25)),
+      right: window.innerWidth > 1120 ? Math.min(390, Math.round(window.innerWidth * 0.22)) : 34
+    },
+    maxZoom,
+    duration: options.duration ?? 820,
+    pitch: options.pitch ?? state.map.getPitch(),
+    bearing: options.bearing ?? state.map.getBearing(),
+    essential: true
+  });
+  state.map.once("moveend", updateAgentOrbitPosition);
+}
+
+function focusRegionForCurrentPanel(ids, maxZoom = 14.65) {
+  if (!ids.length) return;
+  const keepEvidenceGrid =
+    state.activePanel === "microclimate" || (state.activePanel === "energy" && state.activeEnergyMode === "grid");
+  if (keepEvidenceGrid) {
+    state.mapFocusMode = "default";
+    syncMapLayerVisibility();
+    fitRegionBounds(ids, Math.min(maxZoom, 13.2), { pitch: state.map?.getPitch?.() || 0 });
+    return;
+  }
+  focusRegionIds(ids, maxZoom);
+}
+
+function visibleLayerLabel() {
+  if (state.mapFocusMode === "buildings") {
+    return isEnergyBuildingColorMode() ? "3D buildings + energy state" : "3D building height";
+  }
+  if (state.activePanel === "microclimate") return `${microclimateMetricLabel()} grid`;
+  if (state.activePanel === "energy") return `${energyMetricLabel()} ${ENERGY_MODES[state.activeEnergyMode] || "Energy"}`;
+  if (["overview", "layers"].includes(state.activePanel)) return "Optimization opportunity + allocation";
+  return "Evidence trace";
+}
+
+function selectedTargetLabel() {
+  if (state.selectedBuilding) {
+    const p = mergedBuildingProperties(state.selectedBuilding.properties);
+    return `Building ${p.bldg_id || "n/a"}`;
+  }
+  if (state.selectedEnergyGrid) return `Energy grid ${state.selectedEnergyGrid.properties.grid_id}`;
+  if (state.selectedMicroclimate) return `Microclimate grid ${state.selectedMicroclimate.properties.grid_id}`;
+  if (state.selectedFeature) return `Allocation grid ${state.selectedFeature.properties.grid_id}`;
+  if (state.selectedOpportunity) return `Opportunity grid ${state.selectedOpportunity.properties.grid_id}`;
+  return "No selected object";
+}
+
+function regionScopeLabel() {
+  const total = regionFeatures().length;
+  if (!total) return "Region data loading";
+  if (allRegionsSelected()) return `All ${formatNumber(total, 0)} local regions`;
+  const count = selectedRegionCount();
+  if (!count) return "No active region";
+  const majors = selectedMajorRegionIds().map(regionGroupName).slice(0, 2);
+  const suffix = selectedMajorRegionIds().length > 2 ? ` +${selectedMajorRegionIds().length - 2}` : "";
+  return `${formatNumber(count, 0)} local regions in ${majors.join(", ")}${suffix}`;
+}
+
+function renderInteractionStatus() {
+  const node = document.getElementById("interactionStatus");
+  if (!node) return;
+  const chips = [
+    ["Panel", panelLabel()],
+    ["Map", visibleLayerLabel()],
+    ["Scope", regionScopeLabel()],
+    ["Target", selectedTargetLabel()]
+  ];
+  node.innerHTML = chips
+    .map(
+      ([label, value]) => `
+        <span class="interaction-chip">
+          <em>${escapeHtml(label)}</em>
+          <strong>${escapeHtml(value)}</strong>
+        </span>
+      `
+    )
+    .join("");
+}
+
+function refreshActiveSelectionViews(reason = "view", options = {}) {
+  if (state.selectedBuilding) {
+    renderSelectedBuilding();
+    renderAgentOrbit();
+  } else if (state.selectedEnergyGrid) {
+    renderSelectedEnergyGrid();
+  } else if (state.selectedMicroclimate) {
+    renderSelectedMicroclimate();
+  } else if (state.selectedFeature) {
+    renderSelected();
+  } else if (state.selectedOpportunity) {
+    renderSelectedOpportunity();
+  }
+  renderEvidenceSelection();
+  renderScenarioLinkage();
+  renderAgentWorkbench();
+  if (options.trace) {
+    renderAgentTrace(buildAgentTrace(`Refresh ${reason} evidence view.`));
+  }
+  renderInteractionStatus();
 }
 
 function wirePanels() {
@@ -2128,16 +2280,13 @@ function wirePanels() {
       document.querySelectorAll("[data-panel-target]").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
       document.querySelectorAll(".panel-section").forEach((panel) => panel.classList.remove("active"));
-      document.getElementById(`panel-${state.activePanel}`).classList.add("active");
-      if (state.selectedBuilding) {
-        state.mapFocusMode = "buildings";
-      } else if (state.activePanel !== "energy" || state.activeEnergyMode !== "building") {
-        state.mapFocusMode = "default";
-      }
+      document.getElementById(`panel-${state.activePanel}`)?.classList.add("active");
+      setPanelMapFocus(state.activePanel);
       if (state.activePanel === "energy") {
         ensureEnergyData();
       }
       syncMapLayerVisibility();
+      renderInteractionStatus();
     });
   });
 }
@@ -2175,15 +2324,17 @@ function wireLayerControls() {
     syncMapLayerVisibility();
   });
 
-  document.getElementById("fitView").addEventListener("click", fitAllocation);
+  document.getElementById("fitView").addEventListener("click", () => fitAllocation({ buildingFocus: false }));
   document.getElementById("zoomSelected").addEventListener("click", zoomSelected);
   document.getElementById("focus3dBuildings").addEventListener("click", focus3DBuildings);
   document.getElementById("askAgentButton").addEventListener("click", openAgentModal);
   document.getElementById("resetPitch").addEventListener("click", () => {
     if (!state.map) return;
-    state.mapFocusMode = "default";
+    setPanelMapFocus(state.activePanel);
     syncMapLayerVisibility();
     state.map.easeTo({ pitch: 0, bearing: 0, duration: 600 });
+    state.map.once("moveend", updateAgentOrbitPosition);
+    renderInteractionStatus();
   });
   wireRegionFilterControls();
   wireMicroclimateControls();
@@ -2205,7 +2356,7 @@ function wireRegionFilterControls() {
         clearRegionFilterCache();
         syncRegionCheckboxes();
         applyRegionFilter();
-        if (input.checked) focusRegionIds(ids, 14.65);
+        if (input.checked) focusRegionForCurrentPanel(ids, 14.65);
         return;
       }
       const id = input.dataset.regionId || input.value;
@@ -2214,7 +2365,7 @@ function wireRegionFilterControls() {
       clearRegionFilterCache();
       syncRegionCheckboxes();
       applyRegionFilter();
-      if (input.checked) focusRegionIds([id], 15.2);
+      if (input.checked) focusRegionForCurrentPanel([id], 15.2);
     });
   });
   document.querySelectorAll("[data-region-select-all]").forEach((button) => {
@@ -2319,6 +2470,7 @@ function syncMapLayerVisibility() {
   }
   updateBuildingStatus();
   renderMapLegend();
+  renderInteractionStatus();
 }
 
 function syncMicroclimateLayer() {
@@ -2333,21 +2485,28 @@ function syncMicroclimateLayer() {
           applyMicroclimateHourlyValues();
           renderMicroMetricCards();
           renderMicroNarrative();
+          renderWrfSeriesChart();
+          renderLczSensitivityList();
+          renderMicroEnergyEvidence();
         }
         syncMapLayerVisibility();
+        refreshActiveSelectionViews("microclimate");
       })
       .catch((error) => {
         console.warn(error);
         state.activeMicroTimeseries = null;
         updateMicroTimeControls();
         syncMapLayerVisibility();
+        refreshActiveSelectionViews("microclimate");
       });
   }
   syncMapLayerVisibility();
+  refreshActiveSelectionViews("microclimate");
 }
 
 function syncEnergyLayer() {
   syncMapLayerVisibility();
+  refreshActiveSelectionViews("energy");
 }
 
 function renderOverview() {
@@ -2380,6 +2539,7 @@ function renderOverview() {
   renderScenarioNarrative();
   renderScenarioLinkage();
   renderOptimizationBudgetSummary();
+  renderFig10Explorer();
 }
 
 function renderStrategyFilter() {
@@ -2490,8 +2650,10 @@ function wireMicroclimateControls() {
     applyMicroclimateHourlyValues();
     renderMicroMetricCards();
     renderMicroNarrative();
+    renderWrfSeriesChart();
     updateMicroTimeControls();
     syncMapLayerVisibility();
+    refreshActiveSelectionViews("microclimate");
   });
   playButton?.addEventListener("click", () => {
     if (!state.activeMicroTimeseries) return;
@@ -2506,8 +2668,10 @@ function wireMicroclimateControls() {
       applyMicroclimateHourlyValues();
       renderMicroMetricCards();
       renderMicroNarrative();
+      renderWrfSeriesChart();
       updateMicroTimeControls();
       syncMapLayerVisibility();
+      refreshActiveSelectionViews("microclimate");
     }, 650);
   });
 }
@@ -2527,6 +2691,9 @@ function renderMicroclimatePanel() {
   renderMicroMetricButtons();
   renderMicroMetricCards();
   renderMicroNarrative();
+  renderWrfSeriesChart();
+  renderLczSensitivityList();
+  renderMicroEnergyEvidence();
   updateMicroTimeControls();
 }
 
@@ -2683,14 +2850,14 @@ function renderFig10Explorer() {
   node.querySelectorAll("[data-fig10-action]").forEach((button) => {
     button.addEventListener("click", () => {
       if (button.dataset.fig10Action === "allocation") {
-        state.activePanel = "layers";
-        document.querySelector('[data-panel-target="layers"]')?.click();
-        fitAllocation();
+        activatePanel("layers");
+        fitAllocation({ buildingFocus: false });
       } else {
         state.activeMicroMetric = "sensitivity";
+        activatePanel("microclimate");
         renderMicroclimatePanel();
         syncMicroclimateLayer();
-        fitAllocation();
+        fitAllocation({ buildingFocus: false });
       }
     });
   });
@@ -2729,6 +2896,7 @@ function wireEnergyControls() {
       state.mapFocusMode = "default";
       syncEnergyLayer();
     }
+    refreshActiveSelectionViews("energy");
   });
   document.getElementById("energySeasonButtons")?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-energy-season]");
@@ -4447,7 +4615,7 @@ function renderMapLegend() {
     node.innerHTML = renderMicroclimateMapLegend();
     return;
   }
-  if (checkboxChecked("toggleBuildings")) {
+  if (state.mapFocusMode === "buildings" && canRenderBuildingLod() && checkboxChecked("toggleBuildings")) {
     node.innerHTML = renderHeightMapLegend();
     return;
   }
@@ -4557,6 +4725,7 @@ function selectFeature(feature, lngLat) {
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Inspect selected grid ${p.grid_id}.`));
   highlightAgentHotspots("selected");
+  renderInteractionStatus();
 }
 
 function selectOpportunityFeature(feature, lngLat) {
@@ -4605,6 +4774,7 @@ function selectOpportunityFeature(feature, lngLat) {
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Inspect full-city opportunity grid ${p.grid_id}.`));
   highlightAgentHotspots("selected");
+  renderInteractionStatus();
 }
 
 function selectBuildingFeature(feature, lngLat) {
@@ -4661,6 +4831,7 @@ function selectBuildingFeature(feature, lngLat) {
   syncMapLayerVisibility();
   renderAgentOrbit(lngLat);
   highlightAgentHotspots("selected");
+  renderInteractionStatus();
 }
 
 function selectMicroclimateFeature(feature, lngLat) {
@@ -4709,6 +4880,7 @@ function selectMicroclimateFeature(feature, lngLat) {
   renderScenarioLinkage();
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Inspect microclimate grid ${p.grid_id}.`));
+  renderInteractionStatus();
 }
 
 function selectEnergyGridFeature(feature, lngLat) {
@@ -4757,6 +4929,7 @@ function selectEnergyGridFeature(feature, lngLat) {
   renderScenarioLinkage();
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace(`Inspect energy grid ${p.grid_id}.`));
+  renderInteractionStatus();
 }
 
 function clearBuildingSelection() {
@@ -4810,6 +4983,7 @@ function renderEmptySelection() {
   hideAgentOrbit();
   renderEvidenceSelection();
   renderMapLegend();
+  renderInteractionStatus();
 }
 
 function renderSelectedMicroclimate() {
@@ -5251,14 +5425,22 @@ function updateBuildingStatus() {
       : "3D buildings visible";
 }
 
-function fitAllocation() {
+function fitAllocation(options = {}) {
   if (!state.map || !state.data) return;
   if (regionFeatures().length && !allRegionsSelected() && selectedRegionCount()) {
-    focusRegionIds(Array.from(state.selectedRegionIds), 14.65);
+    if (options.buildingFocus) {
+      focusRegionIds(Array.from(state.selectedRegionIds), options.maxZoom || 14.65);
+    } else {
+      const gridPanel =
+        state.activePanel === "microclimate" || (state.activePanel === "energy" && state.activeEnergyMode === "grid");
+      state.mapFocusMode = gridPanel ? "default" : state.mapFocusMode;
+      syncMapLayerVisibility();
+      fitRegionBounds(Array.from(state.selectedRegionIds), options.maxZoom || 12.4);
+    }
     return;
   }
   const bounds = featureCollectionBounds(state.data.opportunityGeojson || state.data.allocationGeojson);
-  if (bounds) state.map.fitBounds(bounds, { padding: 48, duration: 700 });
+  if (bounds) state.map.fitBounds(bounds, { padding: 48, duration: 700, maxZoom: options.maxZoom || 11.8 });
 }
 
 function zoomSelected() {
@@ -5268,7 +5450,7 @@ function zoomSelected() {
     return;
   }
   if (!feature) {
-    fitAllocation();
+    fitAllocation({ buildingFocus: false });
     return;
   }
   zoomToFeature(feature);

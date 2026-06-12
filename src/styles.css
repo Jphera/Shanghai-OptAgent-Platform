@@ -13,6 +13,8 @@
   --amber-soft: rgba(216, 144, 47, 0.16);
   --red: #bd4a42;
   --green: #4d8b57;
+  --cyan: #24b8c5;
+  --night: #132026;
   --shadow: 0 18px 45px rgba(20, 31, 36, 0.14);
   font-family:
     Inter, "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
@@ -89,14 +91,32 @@ select:focus {
 }
 
 .rail {
+  position: relative;
   grid-column: 1;
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 18px 10px;
-  background: #203039;
+  background:
+    linear-gradient(180deg, rgba(36, 184, 197, 0.12), transparent 32%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 1px, transparent 1px 18px),
+    linear-gradient(180deg, #17252d 0%, #203039 56%, #132026 100%);
   color: #ffffff;
   border-right: 1px solid rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.rail::after {
+  content: "";
+  position: absolute;
+  inset: auto 10px 16px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(36, 184, 197, 0.65), transparent);
+}
+
+.rail > * {
+  position: relative;
+  z-index: 1;
 }
 
 .rail-brand {
@@ -114,7 +134,7 @@ select:focus {
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  background: #ffffff;
+  background: linear-gradient(135deg, #ffffff, #eef7f8);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
 }
 
@@ -158,13 +178,14 @@ select:focus {
 
 .rail-button.active,
 .rail-button:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.11);
   color: #ffffff;
+  box-shadow: inset 0 0 0 1px rgba(36, 184, 197, 0.16);
 }
 
 .rail-button.active span {
-  background: var(--amber);
-  border-color: var(--amber);
+  background: linear-gradient(135deg, var(--teal), var(--cyan));
+  border-color: rgba(36, 184, 197, 0.75);
   color: #ffffff;
 }
 
@@ -280,6 +301,23 @@ select:focus {
   border-bottom: 1px solid var(--line);
 }
 
+.product-header {
+  position: relative;
+  background:
+    linear-gradient(135deg, rgba(36, 184, 197, 0.1), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 250, 0.96));
+}
+
+.product-header::after {
+  content: "";
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--teal), var(--cyan), transparent);
+}
+
 .eyebrow {
   margin: 0 0 8px;
   color: var(--teal);
@@ -338,7 +376,10 @@ h2 {
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 251, 251, 0.96)),
+    #ffffff;
+  box-shadow: 0 8px 20px rgba(20, 31, 36, 0.045);
 }
 
 .metric-card strong {
@@ -689,6 +730,15 @@ h2 {
   border-bottom: 1px solid var(--line);
 }
 
+.control-block.agent-workbench {
+  padding: 14px;
+  border: 1px solid rgba(40, 108, 163, 0.16);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(22, 122, 117, 0.08), transparent 44%),
+    rgba(255, 255, 255, 0.86);
+}
+
 .control-block label,
 .section-title {
   display: block;
@@ -799,6 +849,45 @@ h2 {
   max-width: min(880px, calc(100vw - 540px));
 }
 
+.interaction-status {
+  position: absolute;
+  left: 18px;
+  bottom: 18px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-width: min(760px, calc(100% - 440px));
+  pointer-events: none;
+}
+
+.interaction-chip {
+  display: grid;
+  gap: 2px;
+  min-width: 122px;
+  padding: 8px 10px;
+  border: 1px solid rgba(23, 33, 38, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 12px 30px rgba(20, 31, 36, 0.12);
+  backdrop-filter: blur(8px);
+}
+
+.interaction-chip em {
+  color: var(--teal);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.interaction-chip strong {
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.22;
+  overflow-wrap: anywhere;
+}
+
 .map-toolbar button {
   padding: 0 12px;
   box-shadow: var(--shadow);
@@ -877,7 +966,9 @@ h2 {
   pointer-events: auto;
   border: 1px solid rgba(23, 33, 38, 0.12);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.96);
+  background:
+    linear-gradient(145deg, rgba(36, 184, 197, 0.08), transparent 38%),
+    rgba(255, 255, 255, 0.96);
   box-shadow: 0 20px 48px rgba(17, 30, 35, 0.2);
   backdrop-filter: blur(8px);
   overflow: hidden;
@@ -902,7 +993,7 @@ h2 {
   width: 36px;
   height: 36px;
   border-radius: 10px;
-  background: #172126;
+  background: linear-gradient(135deg, var(--night), #25444b);
 }
 
 .agent-run-logo img {
@@ -1992,6 +2083,17 @@ button.bar-row.active .bar-track {
     right: 10px;
     max-width: none;
     justify-content: flex-start;
+  }
+
+  .interaction-status {
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    max-width: none;
+  }
+
+  .interaction-chip {
+    min-width: calc(50% - 4px);
   }
 
   .building-status {

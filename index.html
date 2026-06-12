@@ -72,6 +72,10 @@
             <div class="section-title">Selected comparison</div>
             <div id="scenarioNarrative" class="narrative"></div>
           </div>
+          <div class="control-block">
+            <div class="section-title">Spatial allocation explorer</div>
+            <div id="fig10Explorer" class="fig10-explorer"></div>
+          </div>
         </div>
 
         <div class="panel-section" id="panel-layers">
@@ -186,6 +190,23 @@
               <input id="microOpacity" type="range" min="0.15" max="0.85" value="0.68" step="0.03" />
             </label>
           </div>
+          <div id="microMetricGrid" class="metric-grid micro-metric-grid"></div>
+          <div class="control-block">
+            <div class="section-title">Layer interpretation</div>
+            <div id="microNarrative" class="narrative"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">WRF citywide weekly signal</div>
+            <div id="wrfSeriesChart" class="micro-series-chart"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">LCZ sensitivity ranking</div>
+            <div id="lczSensitivityList" class="micro-list"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Energy sensitivity evidence</div>
+            <div id="microEnergyEvidence" class="micro-list"></div>
+          </div>
         </div>
 
         <div class="panel-section" id="panel-energy">
@@ -257,6 +278,8 @@
             <div id="agentCompactStatus" class="agent-compact-status"></div>
             <div id="agentCards" class="agent-card-grid"></div>
             <div id="agentRunState" class="agent-run-state"></div>
+            <div id="agentEvidence" class="agent-evidence-lineage"></div>
+            <div id="agentGuardrails" class="agent-guardrails"></div>
             <div id="agentTrace" class="agent-trace"></div>
           </div>
           <div class="control-block benchmark-spotlight-block">
@@ -301,6 +324,7 @@
           <span id="buildingStatus" class="building-status">3D buildings loading</span>
         </div>
         <div id="agentOrbit" class="agent-orbit hidden" aria-label="Selected-building agent controls"></div>
+        <div id="interactionStatus" class="interaction-status" aria-live="polite"></div>
       </section>
 
       <aside class="inspector" aria-label="Selected grid analysis">
