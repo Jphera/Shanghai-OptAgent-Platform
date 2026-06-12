@@ -306,7 +306,8 @@ const state = {
   selectedRegionIds: new Set(),
   regionGridFilterCache: new Map(),
   regionFilterInitialized: false,
-  agentOrbitLngLat: null
+  agentOrbitLngLat: null,
+  agentBackendStatus: "checking"
 };
 
 document.addEventListener("DOMContentLoaded", init);
@@ -330,6 +331,7 @@ async function init() {
   renderAgentWorkbench();
   renderAgentTrace(buildAgentTrace("Initialize the Shanghai OptAgent workflow."));
   renderEmptySelection();
+  checkAgentBackendStatus();
   initMap();
 }
 
@@ -3617,28 +3619,54 @@ function renderAgentOrbit(lngLat = null) {
     return;
   }
   state.agentOrbitLngLat = anchor;
-  const badges = { data: "D", knowledge: "K", scenario: "S", optimization: "O", critic: "C" };
-  const entries = Object.entries(AGENTS);
+  const steps = buildAgentTrace(`Inspect selected building ${p.bldg_id || "selection"}.`);
+  const activeStep = steps.find((step) => step.agentKey === state.activeAgent) || steps[0];
+  const grid = state.selectedFeature?.properties;
+  const energy = cachedBuildingEnergyRecord(p.bldg_id);
+  const status = agentBackendStatusLabel();
   node.innerHTML = `
-    <button class="agent-orbit-core" type="button" title="Open OptAgent chat">AI</button>
-    ${entries
-      .map(([key, agent], index) => {
-        const angle = (-90 + index * (360 / entries.length)) * (Math.PI / 180);
-        const x = Math.cos(angle) * 72;
-        const y = Math.sin(angle) * 72;
-        return `
-          <button class="agent-orbit-button ${state.activeAgent === key ? "active" : ""}" type="button" data-agent-orbit="${key}" title="${escapeHtml(agent.label)}: ${escapeHtml(agent.role)}" style="--agent-color:${agent.color};--x:${x.toFixed(1)}px;--y:${y.toFixed(1)}px">
-            <span>${badges[key] || agent.short.slice(0, 1)}</span>
-          </button>
-        `;
-      })
-      .join("")}
+    <section class="agent-run-card" aria-label="Selected-building OptAgent run">
+      <header class="agent-run-header">
+        <span class="agent-run-logo" aria-hidden="true"><img src="./assets/optagent-icon.svg" alt="" /></span>
+        <div>
+          <strong>OptAgent run</strong>
+          <span>Building ${escapeHtml(p.bldg_id || "unknown")} | ${escapeHtml(status)}</span>
+        </div>
+        <button class="agent-run-chat" type="button" data-agent-chat>Ask</button>
+      </header>
+      <div class="agent-run-context">
+        <span>${escapeHtml(buildingFunctionDisplay(p))}</span>
+        <span>Grid ${escapeHtml(p.grid_id || "n/a")}</span>
+        <span>${grid ? strategyLabel(grid.strategy_id) : "not selected"}</span>
+        <span>${energy ? energyFormatValue(energy[`${state.activeEnergySeason}_diff_pct`], "diff_pct") : "energy loading"}</span>
+      </div>
+      <div class="agent-run-track">
+        ${steps
+          .map((step, index) => {
+            const agent = AGENTS[step.agentKey];
+            return `
+              <button class="agent-run-node ${step.agentKey === activeStep.agentKey ? "active" : ""}" type="button" data-agent-orbit="${step.agentKey}" style="--agent-color:${agent.color}">
+                <span>${index + 1}</span>
+                <strong>${escapeHtml(agent.short)}</strong>
+                <em>${escapeHtml(agentStatus(step.agentKey, grid, p))}</em>
+              </button>
+            `;
+          })
+          .join("")}
+      </div>
+      <div class="agent-run-detail" style="--agent-color:${AGENTS[activeStep.agentKey].color}">
+        <span>${escapeHtml(activeStep.agent)} / ${escapeHtml(activeStep.tool)}</span>
+        <p>${escapeHtml(activeStep.text)}</p>
+        <em>${escapeHtml(activeStep.output)}</em>
+      </div>
+    </section>
   `;
-  node.querySelector(".agent-orbit-core")?.addEventListener("click", openAgentModal);
+  node.querySelector("[data-agent-chat]")?.addEventListener("click", openAgentModal);
   node.querySelectorAll("[data-agent-orbit]").forEach((button) => {
     button.addEventListener("click", () => {
       state.activeAgent = button.dataset.agentOrbit;
       renderAgentWorkbench();
+      renderAgentOrbit(anchor);
       renderAgentTrace(buildAgentTrace(`Focus ${AGENTS[state.activeAgent].label} for building ${p.bldg_id || "selection"}.`));
     });
   });
@@ -3663,12 +3691,13 @@ function updateAgentOrbitPosition() {
   const point = state.map.project(state.agentOrbitLngLat);
   const canvas = state.map.getCanvas();
   const visible =
-    point.x > -110 &&
-    point.y > -110 &&
-    point.x < canvas.clientWidth + 110 &&
-    point.y < canvas.clientHeight + 110 &&
+    point.x > -360 &&
+    point.y > -220 &&
+    point.x < canvas.clientWidth + 360 &&
+    point.y < canvas.clientHeight + 220 &&
     state.map.getZoom() >= buildingMinZoom();
   node.style.transform = `translate(${point.x.toFixed(1)}px, ${point.y.toFixed(1)}px)`;
+  node.dataset.side = point.x > canvas.clientWidth - 430 ? "left" : "right";
   node.classList.toggle("hidden", !visible);
 }
 
@@ -5364,6 +5393,50 @@ function wireChat() {
   );
 }
 
+function agentBackendStatusLabel() {
+  if (state.agentBackendStatus === "deepseek") return "Render + DeepSeek online";
+  if (state.agentBackendStatus === "fallback") return "Render local fallback";
+  if (state.agentBackendStatus === "streaming") return "Render streaming";
+  if (state.agentBackendStatus === "offline") return "backend offline";
+  return "backend checking";
+}
+
+function setBackendStatus(status, detail = "") {
+  state.agentBackendStatus = status;
+  const node = document.getElementById("backendStatus");
+  if (!node) return;
+  node.dataset.status = status;
+  node.textContent = detail || agentBackendStatusLabel();
+  renderAgentOrbit();
+}
+
+function agentHealthEndpoint(endpoint = CONFIG.llm?.proxyEndpoint || "") {
+  if (!endpoint) return "";
+  if (endpoint.endsWith("/api/chat")) return endpoint.replace(/\/api\/chat$/, "/api/health");
+  if (endpoint.endsWith("/chat")) return endpoint.replace(/\/chat$/, "/health");
+  return endpoint.replace(/\/$/, "") + "/health";
+}
+
+async function checkAgentBackendStatus() {
+  const healthEndpoint = agentHealthEndpoint();
+  if (!healthEndpoint) {
+    setBackendStatus("offline", "No agent backend");
+    return;
+  }
+  setBackendStatus("checking", "Agent backend checking");
+  try {
+    const response = await fetch(healthEndpoint, { method: "GET" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const json = await response.json();
+    setBackendStatus(
+      json.deepseek_configured ? "deepseek" : "fallback",
+      json.deepseek_configured ? "Render + DeepSeek online" : "Render online | local fallback"
+    );
+  } catch (error) {
+    setBackendStatus("offline", "Agent backend offline");
+  }
+}
+
 async function submitAgentMessage(message) {
   const clean = String(message || "").trim();
   if (!clean) return;
@@ -5376,6 +5449,7 @@ async function submitAgentMessage(message) {
     highlightAgentHotspots("selected");
   }
   setAgentThinking("Querying the secure DeepSeek agent service on Render.");
+  setBackendStatus("streaming", "Render agent running");
   const assistantNode = addChatMessage("assistant", "");
   assistantNode.classList.add("streaming");
   try {
@@ -5388,6 +5462,7 @@ async function submitAgentMessage(message) {
     );
   } finally {
     assistantNode.classList.remove("streaming");
+    checkAgentBackendStatus();
     window.setTimeout(() => setAgentThinking(""), 650);
   }
 }
@@ -5589,6 +5664,7 @@ async function streamAgentProxy(message, endpoint, model, targetNode) {
   }
   if (buffer) consumeEvent(buffer);
   const label = mode === "deepseek-stream" ? "DeepSeek streaming agent" : mode === "local-backend" ? "Render local evidence fallback" : mode;
+  setBackendStatus(mode === "local-backend" ? "fallback" : "deepseek", label);
   const suffix = warning ? `\n\n[${label}. ${warning}]` : `\n\n[${label}.]`;
   setChatMessageText(targetNode, `${answer || localAgentAnswer(message)}${suffix}`);
 }
@@ -5614,6 +5690,7 @@ async function callAgentProxy(message, endpoint, model) {
       : json.mode === "local-backend"
         ? "Render local evidence fallback"
         : json.mode || "agent proxy";
+  setBackendStatus(json.mode === "local-backend" ? "fallback" : json.mode === "deepseek" ? "deepseek" : "checking", mode);
   const warning = json.warning ? ` ${json.warning}` : "";
   return `${answer}\n\n[${mode}.${warning}]`;
 }

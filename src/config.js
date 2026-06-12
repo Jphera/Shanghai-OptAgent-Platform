@@ -20,9 +20,9 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
   },
   llm: {
     providerName: "DeepSeek",
-    proxyEndpoint: window.location.hostname.includes("onrender.com")
-      ? "/api/chat"
-      : "https://shanghai-optagent-platform.onrender.com/api/chat",
+    proxyEndpoint: ["localhost", "127.0.0.1", ""].includes(window.location.hostname)
+      ? "https://shanghai-optagent-platform.onrender.com/api/chat"
+      : "/api/chat",
     endpoint: "https://api.deepseek.com/chat/completions",
     model: "deepseek-reasoner",
     forceModel: true
