@@ -1,3 +1,6 @@
+const SHANGHAI_OPTAGENT_RENDER_ORIGIN = "https://shanghai-optagent-platform.onrender.com";
+const SHANGHAI_OPTAGENT_USE_SAME_ORIGIN_API = window.location.hostname.endsWith(".onrender.com");
+
 window.SHANGHAI_OPTAGENT_CONFIG = {
   mapboxAccessToken: [
     "pk.eyJ1IjoianB5anB5IiwiYSI6ImNtbTJ2OG9sdTBjMzUycm9sbDNyczFlbjcifQ",
@@ -20,9 +23,9 @@ window.SHANGHAI_OPTAGENT_CONFIG = {
   },
   llm: {
     providerName: "DeepSeek",
-    proxyEndpoint: ["localhost", "127.0.0.1", ""].includes(window.location.hostname)
-      ? "https://shanghai-optagent-platform.onrender.com/api/chat"
-      : "/api/chat",
+    proxyEndpoint: SHANGHAI_OPTAGENT_USE_SAME_ORIGIN_API
+      ? "/api/chat"
+      : `${SHANGHAI_OPTAGENT_RENDER_ORIGIN}/api/chat`,
     endpoint: "https://api.deepseek.com/chat/completions",
     model: "deepseek-reasoner",
     forceModel: true

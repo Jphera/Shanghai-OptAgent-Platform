@@ -3795,7 +3795,7 @@ function renderAgentOrbit(lngLat = null) {
   node.innerHTML = `
     <section class="agent-run-card" aria-label="Selected-building OptAgent run">
       <header class="agent-run-header">
-        <span class="agent-run-logo" aria-hidden="true"><img src="./assets/optagent-icon.svg" alt="" /></span>
+        <span class="agent-run-logo" aria-hidden="true"><img src="./assets/robot.png" alt="" /></span>
         <div>
           <strong>OptAgent run</strong>
           <span>Building ${escapeHtml(p.bldg_id || "unknown")} | ${escapeHtml(status)}</span>
@@ -5599,6 +5599,16 @@ function agentHealthEndpoint(endpoint = CONFIG.llm?.proxyEndpoint || "") {
   return endpoint.replace(/\/$/, "") + "/health";
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 60000) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 async function checkAgentBackendStatus() {
   const healthEndpoint = agentHealthEndpoint();
   if (!healthEndpoint) {
@@ -5607,7 +5617,7 @@ async function checkAgentBackendStatus() {
   }
   setBackendStatus("checking", "Agent backend checking");
   try {
-    const response = await fetch(healthEndpoint, { method: "GET" });
+    const response = await fetchWithTimeout(healthEndpoint, { method: "GET" }, 12000);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const json = await response.json();
     setBackendStatus(
@@ -5790,7 +5800,7 @@ function agentStreamEndpoint(endpoint) {
 }
 
 async function streamAgentProxy(message, endpoint, model, targetNode) {
-  const response = await fetch(endpoint, {
+  const response = await fetchWithTimeout(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -5798,7 +5808,7 @@ async function streamAgentProxy(message, endpoint, model, targetNode) {
       message,
       context: buildContextPrompt()
     })
-  });
+  }, 90000);
   if (!response.ok || !response.body) {
     throw new Error(`HTTP ${response.status}`);
   }
@@ -5852,7 +5862,7 @@ async function streamAgentProxy(message, endpoint, model, targetNode) {
 }
 
 async function callAgentProxy(message, endpoint, model) {
-  const response = await fetch(endpoint, {
+  const response = await fetchWithTimeout(endpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -5860,7 +5870,7 @@ async function callAgentProxy(message, endpoint, model) {
       message,
       context: buildContextPrompt()
     })
-  });
+  }, 90000);
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }

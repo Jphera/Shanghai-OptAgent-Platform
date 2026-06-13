@@ -134,14 +134,17 @@ select:focus {
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #ffffff, #eef7f8);
+  background: linear-gradient(135deg, #0e1b22, #223a43);
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.22);
+  overflow: hidden;
 }
 
 .mark img {
-  width: 42px;
-  height: 42px;
+  width: 52px;
+  height: 52px;
   display: block;
+  object-fit: contain;
+  transform: translateY(5px);
 }
 
 .rail-title {
@@ -994,12 +997,15 @@ h2 {
   height: 36px;
   border-radius: 10px;
   background: linear-gradient(135deg, var(--night), #25444b);
+  overflow: hidden;
 }
 
 .agent-run-logo img {
-  width: 36px;
-  height: 36px;
+  width: 46px;
+  height: 46px;
   display: block;
+  object-fit: contain;
+  transform: translateY(5px);
 }
 
 .agent-run-header strong,
@@ -1885,12 +1891,15 @@ button.bar-row.active .bar-track {
   border-radius: 11px;
   background: #172126;
   box-shadow: 0 5px 14px rgba(47, 143, 224, 0.38);
+  overflow: hidden;
 }
 
 .agent-avatar img {
-  width: 38px;
-  height: 38px;
+  width: 48px;
+  height: 48px;
   display: block;
+  object-fit: contain;
+  transform: translateY(5px);
 }
 
 .agent-avatar::after {
