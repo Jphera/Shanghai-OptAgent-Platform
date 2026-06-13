@@ -1,0 +1,17 @@
+.DS_Store
+Thumbs.db
+*.log
+server.out
+server.err
+.env
+.env.*
+node_modules/
+dist/
+.cache/
+.vendor/
+.backend_deps*/
+__pycache__/
+*.pyc
+mapbox_sources/
+mapbox_mbtiles/
+mapbox_studio_upload/

@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Shanghai OptAgent Platform</title>
+    <link rel="icon" type="image/png" href="./assets/robot.png" />
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.css" rel="stylesheet" />
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <main id="app">
+      <aside class="rail" aria-label="Primary navigation">
+        <div class="rail-brand">
+          <span class="mark" aria-hidden="true">
+            <img src="./assets/robot.png" alt="" />
+          </span>
+          <span class="rail-title">OptAgent</span>
+        </div>
+        <button class="rail-button active" data-panel-target="overview" title="Overview">
+          <span>O</span>
+          <small>Overview</small>
+        </button>
+        <button class="rail-button" data-panel-target="layers" title="Agent optimization">
+          <span>Ao</span>
+          <small>Agent Opt</small>
+        </button>
+        <button class="rail-button" data-panel-target="microclimate" title="Microclimate">
+          <span>M</span>
+          <small>Micro</small>
+        </button>
+        <button class="rail-button" data-panel-target="energy" title="Energy">
+          <span>En</span>
+          <small>Energy</small>
+        </button>
+        <button class="rail-button" data-panel-target="evidence" title="Evidence">
+          <span>E</span>
+          <small>Evidence</small>
+        </button>
+      </aside>
+
+      <section class="sidebar" aria-label="Controls">
+        <header class="product-header">
+          <p class="eyebrow">Shanghai urban retrofit decision support</p>
+          <h1>Agentic microclimate-aware decarbonization</h1>
+        </header>
+
+        <div class="panel-section active" id="panel-overview">
+          <div class="control-block region-filter-block">
+            <span class="control-label">Region filter</span>
+            <details class="region-filter-dropdown">
+              <summary>
+                <span data-region-filter-summary>Loading regions...</span>
+                <span class="chevron" aria-hidden="true">v</span>
+              </summary>
+              <div class="region-filter-menu">
+                <div class="region-filter-actions">
+                  <button type="button" data-region-select-all>Select all</button>
+                  <button type="button" data-region-clear-all>Clear</button>
+                </div>
+                <div class="region-filter-list" data-region-filter-list></div>
+              </div>
+            </details>
+          </div>
+          <div class="metric-grid" id="metricGrid"></div>
+          <div class="control-block">
+            <label for="scenarioSelect">Model comparison</label>
+            <select id="scenarioSelect"></select>
+            <p id="scenarioLinkage" class="summary-text"></p>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Selected comparison</div>
+            <div id="scenarioNarrative" class="narrative"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Spatial allocation explorer</div>
+            <div id="fig10Explorer" class="fig10-explorer"></div>
+          </div>
+        </div>
+
+        <div class="panel-section" id="panel-layers">
+          <div class="microclimate-head">
+            <p class="eyebrow">Agent optimization</p>
+            <h2>Budget-constrained allocation</h2>
+          </div>
+          <div id="optimizationBudgetSummary" class="optimization-summary"></div>
+          <div class="control-block">
+            <p class="summary-text">
+              Full opportunity grids show citywide candidate potential. Selected allocation grids show the
+              budget-constrained NSGA-II portfolio for the active model comparison.
+            </p>
+          </div>
+          <div class="control-block region-filter-block">
+            <span class="control-label">Region filter</span>
+            <details class="region-filter-dropdown">
+              <summary>
+                <span data-region-filter-summary>Loading regions...</span>
+                <span class="chevron" aria-hidden="true">v</span>
+              </summary>
+              <div class="region-filter-menu">
+                <div class="region-filter-actions">
+                  <button type="button" data-region-select-all>Select all</button>
+                  <button type="button" data-region-clear-all>Clear</button>
+                </div>
+                <div class="region-filter-list" data-region-filter-list></div>
+              </div>
+            </details>
+          </div>
+          <div class="control-block">
+            <label for="strategyFilter">Strategy filter</label>
+            <select id="strategyFilter"></select>
+          </div>
+          <div class="control-block">
+            <label for="colorMetric">Map color metric</label>
+            <select id="colorMetric">
+              <option value="strategy">Strategy</option>
+              <option value="annual_carbon_reduction_tco2">Annual carbon reduction</option>
+              <option value="selected_buildings">Selected buildings</option>
+              <option value="max_microclimate_sensitivity_pct">Microclimate sensitivity</option>
+            </select>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Legend</div>
+            <div id="legend" class="legend"></div>
+          </div>
+          <div class="toggle-list">
+            <label><input id="toggleBoundary" type="checkbox" checked /> Shanghai boundary</label>
+            <label><input id="toggleOpportunity" type="checkbox" checked /> Full opportunity grids</label>
+            <label><input id="toggleAllocation" type="checkbox" checked /> Budget-selected allocation</label>
+            <label><input id="toggleBuildings" type="checkbox" checked /> 3D buildings LOD</label>
+            <label><input id="toggleLabels" type="checkbox" /> Grid labels</label>
+          </div>
+          <button id="fitView" type="button" class="wide-button">Fit Shanghai allocation</button>
+        </div>
+
+        <div class="panel-section" id="panel-microclimate">
+          <div class="microclimate-head">
+            <p class="eyebrow">Previous paper evidence</p>
+            <h2>Representative-week microclimate</h2>
+          </div>
+          <div class="control-block">
+            <span class="control-label">Questions to answer:</span>
+            <p class="summary-text">
+              How do representative hot, cold, and transitional weeks reshape local weather exposure across Shanghai?
+            </p>
+          </div>
+          <div class="control-block">
+            <span class="control-label">What &amp; How:</span>
+            <p class="summary-text">
+              WRF representative-week outputs and LCZ sensitivity are mapped as 500 m weather evidence for temperature, humidity, solar radiation, wind, and morphology sensitivity.
+            </p>
+          </div>
+          <div class="control-block region-filter-block">
+            <span class="control-label">Region filter</span>
+            <details class="region-filter-dropdown">
+              <summary>
+                <span data-region-filter-summary>Loading regions...</span>
+                <span class="chevron" aria-hidden="true">v</span>
+              </summary>
+              <div class="region-filter-menu">
+                <div class="region-filter-actions">
+                  <button type="button" data-region-select-all>Select all</button>
+                  <button type="button" data-region-clear-all>Clear</button>
+                </div>
+                <div class="region-filter-list" data-region-filter-list></div>
+              </div>
+            </details>
+          </div>
+          <div class="control-block metric-block">
+            <span class="control-label">WRF representative-week weather</span>
+            <div id="microMetricButtons" class="segmented compact"></div>
+          </div>
+          <div class="control-block">
+            <span class="control-label">Representative week</span>
+            <div id="microSeasonButtons" class="segmented compact three"></div>
+          </div>
+          <div id="microTimeBlock" class="control-block weather-time-block hidden-block">
+            <div class="control-label-row">
+              <span class="control-label">WRF time</span>
+              <output id="microTimeLabel">Summary</output>
+            </div>
+            <div class="time-row">
+              <input id="microTime" type="range" min="0" max="0" value="0" step="1" />
+              <button id="microPlay" type="button">Play</button>
+            </div>
+          </div>
+          <div class="control-block">
+            <label>
+              <span class="control-label">Grid opacity</span>
+              <input id="microOpacity" type="range" min="0.15" max="0.85" value="0.68" step="0.03" />
+            </label>
+          </div>
+          <div id="microMetricGrid" class="metric-grid micro-metric-grid"></div>
+          <div class="control-block">
+            <div class="section-title">Layer interpretation</div>
+            <div id="microNarrative" class="narrative"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">WRF citywide weekly signal</div>
+            <div id="wrfSeriesChart" class="micro-series-chart"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">LCZ sensitivity ranking</div>
+            <div id="lczSensitivityList" class="micro-list"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Energy sensitivity evidence</div>
+            <div id="microEnergyEvidence" class="micro-list"></div>
+          </div>
+        </div>
+
+        <div class="panel-section" id="panel-energy">
+          <div class="microclimate-head">
+            <p class="eyebrow">Previous paper evidence</p>
+            <h2>Building energy response</h2>
+          </div>
+          <div class="control-block">
+            <span class="control-label">Questions to answer:</span>
+            <p class="summary-text">
+              How much does microclimate-aware modelling change building energy use across seasons and grid cells?
+            </p>
+          </div>
+          <div class="control-block">
+            <span class="control-label">What &amp; How:</span>
+            <p class="summary-text">
+              Representative-week simulations compare TMY and WRF-informed energy use at building and 500 m scales.
+            </p>
+          </div>
+          <div class="control-block">
+            <label class="control-label" for="energyModeSelect">Step 1: Select Spatial Resolution</label>
+            <select id="energyModeSelect">
+              <option value="building" selected>Individual buildings</option>
+              <option value="grid">Aggregated grid cells (500 m x 500 m)</option>
+              <option value="combined">Individual buildings + aggregated grid cells</option>
+            </select>
+          </div>
+          <div class="control-block region-filter-block">
+            <span class="control-label">Step 2: Select Areas</span>
+            <details class="region-filter-dropdown">
+              <summary>
+                <span data-region-filter-summary>Loading regions...</span>
+                <span class="chevron" aria-hidden="true">v</span>
+              </summary>
+              <div class="region-filter-menu">
+                <div class="region-filter-actions">
+                  <button type="button" data-region-select-all>Select all</button>
+                  <button type="button" data-region-clear-all>Clear</button>
+                </div>
+                <div class="region-filter-list" data-region-filter-list></div>
+              </div>
+            </details>
+          </div>
+          <div class="control-block">
+            <span class="control-label">Step 3: Select Representative Week</span>
+            <div id="energySeasonButtons" class="segmented compact three"></div>
+          </div>
+          <div class="control-block">
+            <label class="control-label" for="energyTypeSelect">Step 4: Select Building Types</label>
+            <select id="energyTypeSelect">
+              <option value="all" selected>All building types</option>
+            </select>
+          </div>
+          <div class="control-block metric-block">
+            <label class="control-label" for="energyMetricSelect">Energy Use (weekly simulation data, kWh/week)</label>
+            <select id="energyMetricSelect"></select>
+          </div>
+          <div class="control-block">
+            <label>
+              <span class="control-label">Grid opacity</span>
+              <input id="energyOpacity" type="range" min="0.15" max="0.85" value="0.64" step="0.03" />
+            </label>
+          </div>
+        </div>
+
+        <div class="panel-section" id="panel-evidence">
+          <div class="control-block agent-workbench">
+            <div class="section-title">Agent decision pipeline</div>
+            <div id="agentCompactStatus" class="agent-compact-status"></div>
+            <div id="agentCards" class="agent-card-grid"></div>
+            <div id="agentRunState" class="agent-run-state"></div>
+            <div id="agentEvidence" class="agent-evidence-lineage"></div>
+            <div id="agentGuardrails" class="agent-guardrails"></div>
+            <div id="agentTrace" class="agent-trace"></div>
+          </div>
+          <div class="control-block benchmark-spotlight-block">
+            <div class="section-title">Interactive 10-model benchmark</div>
+            <button id="benchmarkSpotlight" class="benchmark-spotlight" type="button">
+              <img src="./assets/figures/fig13_agent_model_benchmark.png" alt="10-model OptAgent benchmark" />
+              <span>Open benchmark cards</span>
+            </button>
+            <div id="benchmarkExplorer" class="benchmark-explorer"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Selected map evidence</div>
+            <div id="evidenceSelection" class="evidence-selection"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">Building-type retrofit ranking</div>
+            <div id="archetypeExplorer" class="archetype-explorer"></div>
+          </div>
+          <div class="control-block">
+            <div class="section-title">NSGA-II Pareto front</div>
+            <div id="paretoExplorer" class="pareto-explorer"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="map-shell">
+        <div id="map"></div>
+        <div id="tokenNotice" class="token-notice hidden">
+          <div>
+            <h2>Mapbox token required</h2>
+            <p>Paste a Mapbox public token to load the accurate basemap. It is stored only in this browser.</p>
+            <input id="mapboxTokenInput" type="password" placeholder="pk..." />
+            <button id="saveMapboxToken" type="button">Load Mapbox</button>
+          </div>
+        </div>
+        <div class="map-toolbar">
+          <button id="resetPitch" type="button">2D</button>
+          <button id="focus3dBuildings" type="button">3D buildings</button>
+          <button id="zoomSelected" type="button">Zoom selected</button>
+          <button id="askAgentButton" type="button" class="primary-tool">Ask OptAgent</button>
+          <span id="backendStatus" class="backend-status">Agent backend checking</span>
+          <span id="buildingStatus" class="building-status">3D buildings loading</span>
+        </div>
+        <div id="agentOrbit" class="agent-orbit hidden" aria-label="Selected-building agent controls"></div>
+        <div id="interactionStatus" class="interaction-status" aria-live="polite"></div>
+      </section>
+
+      <aside class="inspector" aria-label="Selected grid analysis">
+        <div class="inspector-header">
+          <span class="eyebrow">Critic agent view</span>
+          <h2 id="selectedTitle">Select a grid</h2>
+        </div>
+        <div id="selectedSummary" class="selected-summary"></div>
+        <div class="agent-steps" id="agentSteps"></div>
+        <div class="unit-examples" id="unitExamples"></div>
+        <div class="inspector-legend" id="mapLegend" aria-label="Active map legend"></div>
+      </aside>
+
+      <div id="agentModal" class="agent-modal hidden" role="dialog" aria-modal="false" aria-labelledby="agentModalTitle">
+        <section class="agent-modal-panel">
+          <header class="agent-modal-header" id="agentModalDrag" title="Drag to move">
+            <div class="agent-modal-headline">
+              <span class="agent-avatar" aria-hidden="true">
+                <img src="./assets/robot.png" alt="" />
+              </span>
+              <div>
+                <p class="eyebrow">DeepSeek reasoning agent</p>
+                <h2 id="agentModalTitle">Ask OptAgent</h2>
+              </div>
+            </div>
+            <button id="closeAgentModal" type="button" title="Close">Close</button>
+          </header>
+          <p class="agent-disclaimer" style="margin:0 0 10px;font-size:12px;line-height:1.5;color:#5b6b67;">
+            OptAgent chats naturally and answers questions about the platform and paper, grounding replies in the loaded
+            Shanghai evidence. It is an orchestration and explanation layer &mdash; energy/carbon numbers come from the
+            UBEM&nbsp;+&nbsp;NSGA-II/MILP&nbsp;+&nbsp;EnergyPlus pipeline, not from the model.
+          </p>
+          <div id="agentThinking" class="agent-thinking hidden"></div>
+          <div id="chatLog" class="chat-log" aria-live="polite"></div>
+          <form id="chatForm" class="chat-form">
+            <input id="chatInput" type="text" placeholder="Ask OptAgent anything about the platform, paper, buildings, WRF evidence, or retrofit decisions..." />
+            <button type="submit">Send</button>
+          </form>
+        </section>
+      </div>
+    </main>
+
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.js"></script>
+    <script src="./src/config.js"></script>
+    <script src="./src/app.js"></script>
+  </body>
+</html>

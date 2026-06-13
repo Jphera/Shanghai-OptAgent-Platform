@@ -1,0 +1,25 @@
+{
+  "metadata": {
+    "generated_by": "scripts/build_building_semantic_shards.py",
+    "source": "shanghai_all_jpy_with_llm_attrs.csv",
+    "record_count": 592795,
+    "source_note": "POI-LLM refined building semantics keyed by OID_/bldg_id. Loaded on demand for clicked Mapbox building features."
+  },
+  "columns": [
+    "bldg_id",
+    "grid_id",
+    "coarse_function",
+    "fine_function",
+    "building_name",
+    "age_bin",
+    "thermal_template",
+    "llm_confidence"
+  ],
+  "shards": {
+    "count": 24,
+    "urlPattern": "./data/building-semantic-shards/building-semantic-{shard}.json",
+    "totalBytes": 57861865,
+    "minBytes": 2406911,
+    "maxBytes": 2413417
+  }
+}
